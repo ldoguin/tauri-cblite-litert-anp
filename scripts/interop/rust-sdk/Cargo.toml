@@ -1,0 +1,19 @@
+[package]
+name = "anp-rust-interop"
+version = "0.1.0"
+edition = "2021"
+description = "Drives the official ANP Rust SDK (anp 1.0.7) against this project's P5 messages. Not part of the workspace."
+publish = false
+
+# not a member of the project's workspace: it pulls in a third-party SDK and is built on its own
+[workspace]
+
+[dependencies]
+anp = { version = "=1.0.7", default-features = false }
+serde_json = "1"
+base64 = "0.22"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+chrono = "0.4"
+ureq = { version = "2", default-features = false }
+tiny_http = "0.12"
+bs58 = "0.5"

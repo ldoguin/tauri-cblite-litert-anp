@@ -1,0 +1,13 @@
+[package]
+name = "anp-did"
+version = "0.1.0"
+edition = "2021"
+description = "did:wba (ANP-03) identities: e1_ key binding, DID documents with eddsa-jcs-2022 proofs, offline verification"
+license = "MIT"
+
+[dependencies]
+ed25519-dalek = "2"
+sha2 = "0.10"
+bs58 = "0.5"
+base64 = "0.22"
+serde_json = "1"

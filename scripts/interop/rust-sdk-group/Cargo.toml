@@ -1,0 +1,14 @@
+[package]
+name = "anp-rust-group-interop"
+version = "0.1.0"
+edition = "2021"
+description = "Drives the official ANP Rust SDK (anp 1.0.7, with its MLS feature) as a P6 group device, against this project's. Not part of the workspace."
+publish = false
+
+# not a member of the project's workspace: it pulls in a third-party SDK and is built on its own
+[workspace]
+
+[dependencies]
+anp = { version = "=1.0.7" }
+serde_json = "1"
+base64 = "0.22"

@@ -1,0 +1,26 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>intro</title><style>
+  :root { --bg:#0f0e0d; --fg:#f5f4f2; --mut:#a8a29e; --red:#ea2328; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; width:1920px; height:1080px; background:var(--bg); color:var(--fg); font:28px/1.45 "Segoe UI", system-ui, sans-serif; overflow:hidden; }
+  body { display:flex; flex-direction:column; justify-content:center; padding:0 150px; }
+  .tag { color:var(--red); font-weight:700; letter-spacing:.14em; text-transform:uppercase; font-size:24px; margin-bottom:18px; }
+  h1 { font-size:76px; line-height:1.1; margin:0 0 28px; font-weight:700; }
+  p.lead { font-size:36px; color:var(--mut); margin:0 0 46px; max-width:1500px; }
+  ul { margin:0; padding:0; list-style:none; display:grid; gap:20px; max-width:1560px; }
+  li { padding-left:44px; position:relative; }
+  li::before { content:""; position:absolute; left:0; top:.55em; width:16px; height:16px; border-radius:50%; background:var(--red); }
+  li b { color:#fff; }
+  .foot { position:absolute; left:150px; right:150px; bottom:56px; color:var(--mut); font-size:22px; }
+  code { font-family:Consolas, monospace; background:#1a1816; padding:2px 8px; border-radius:6px; }
+</style></head><body>
+<div class="tag">Agent Network Protocol on Couchbase Lite</div>
+<h1>Field inspection that survives no signal</h1>
+<p class="lead">A technician in a basement. Three devices, no cloud: a field tablet, a branch office and head office, each its own database, joined by peer-to-peer replication.</p>
+<ul>
+  <li><b>Identity.</b> Every device is a <code>did:wba</code> identity (ANP-03), derived from its own key.</li>
+  <li><b>Trust.</b> Tokens signed by one authority and bound to each DID: the tablet may message the branch and head office only.</li>
+  <li><b>Privacy.</b> Task text is end-to-end encrypted, links are TLS with a pinned certificate, databases are encrypted at rest.</li>
+  <li><b>Discovery.</b> Each device publishes a signed agent description (ANP-07); peers verify it with no call to anyone&rsquo;s domain.</li>
+</ul>
+<div class="foot">In this recording a rule-based agent stands in for the tablet&rsquo;s on-device model; everything else is the real thing.</div>
+</body></html>

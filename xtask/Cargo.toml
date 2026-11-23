@@ -1,0 +1,10 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2021"
+description = "Project tasks in Rust, run as `cargo xtask <task>`: the end-to-end checks that were PowerShell scripts, on every platform"
+publish = false
+
+[dependencies]
+serde_json = "1"
+ureq = { version = "2", default-features = false }

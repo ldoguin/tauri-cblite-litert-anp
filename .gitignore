@@ -1,0 +1,11 @@
+target/
+**/target/
+*.log
+*.key
+*.token
+.env
+node_modules/
+
+
+# generated recordings (rebuild with scripts/record-anp-video.ps1)
+recordings/

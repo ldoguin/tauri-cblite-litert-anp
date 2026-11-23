@@ -1,0 +1,16 @@
+[package]
+name = "anp-e2ee"
+version = "0.1.0"
+edition = "2021"
+description = "End-to-end encryption for ANP agents: signed prekey bundles and X3DH-style sealed messages (the stateless subset of ANP-09 P5)"
+license = "MIT"
+
+[dependencies]
+anp-did = { path = "../anp-did" }
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+getrandom = "0.2"
+serde_json = "1"

@@ -1,0 +1,15 @@
+[package]
+name = "anp-wns"
+version = "0.1.0"
+edition = "2021"
+description = "ANP-04 WNS: handles (alice.example.com, wba://alice.example.com) that resolve to a DID and are bound to it in both directions"
+license = "MIT"
+
+[dependencies]
+anp-did = { path = "../anp-did" }
+anp-resolve = { path = "../anp-resolve" }
+serde_json = "1"
+
+[[bin]]
+name = "anp-wns"
+path = "src/main.rs"

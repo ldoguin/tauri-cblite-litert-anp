@@ -1,0 +1,15 @@
+[package]
+name = "anp-httpauth"
+version = "0.1.0"
+edition = "2021"
+description = "ANP-02 request authentication: RFC 9421 HTTP Message Signatures with Ed25519 keys from DID documents"
+license = "MIT"
+
+[dependencies]
+anp-did = { path = "../anp-did" }
+sha2 = "0.10"
+base64 = "0.22"
+ed25519-dalek = "2"
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+getrandom = "0.2"

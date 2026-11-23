@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = ["crates/anp-did", "crates/anp-ad", "crates/anp-e2ee", "crates/anp-httpauth", "crates/anp-resolve", "crates/anp-authz", "crates/anp-cblite", "crates/anp-node", "crates/anp-search", "crates/anp-wns", "crates/anp-meta", "crates/anp-group", "crates/anp-group-mls", "crates/anp-group-host", "xtask"]
+
+[workspace.dependencies]
+couchbase_lite = { git = "https://github.com/ldoguin/couchbase-lite-rust", rev = "6973ec9b8316685b1da1067670c4386484e5d95f", default-features = false }
+
+# the listener's RSA key is generated once per node; that is slow in an unoptimised build
+[profile.dev.package.num-bigint-dig]
+opt-level = 3
+[profile.dev.package.rsa]
+opt-level = 3

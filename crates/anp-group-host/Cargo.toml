@@ -1,0 +1,20 @@
+[package]
+name = "anp-group-host"
+version = "0.1.0"
+edition = "2021"
+description = "ANP P6 group host: the service that holds key packages, orders membership changes, relays messages and issues receipts, without ever holding a group secret"
+license = "MIT"
+
+[dependencies]
+anp-group = { path = "../anp-group" }
+anp-group-mls = { path = "../anp-group-mls" }
+anp-did = { path = "../anp-did" }
+serde_json = "1"
+base64 = "0.22"
+sha2 = "0.10"
+
+[dev-dependencies]
+ureq = { version = "2", default-features = false }
+anp-httpauth = { path = "../anp-httpauth" }
+bs58 = "0.5"
+tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }

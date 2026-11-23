@@ -1,0 +1,30 @@
+[package]
+name = "anp-search"
+version = "0.1.0"
+edition = "2021"
+description = "An ANP search agent: agents register their descriptions (or a domain is crawled), only verified ones are indexed and searched (ANP-08 passive discovery)"
+license = "MIT"
+
+[features]
+default = ["enterprise"]
+enterprise = ["couchbase_lite/enterprise"]
+
+[dependencies]
+couchbase_lite.workspace = true
+anp-httpauth = { path = "../anp-httpauth" }
+sha2 = "0.10"
+anp-did = { path = "../anp-did" }
+anp-ad = { path = "../anp-ad", default-features = false }
+anp-resolve = { path = "../anp-resolve" }
+anp-wns = { path = "../anp-wns" }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+axum = "0.7"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
+log = "0.4"
+env_logger = "0.11"
+getrandom = "0.2"
+hex = "0.4"
+
+[dev-dependencies]
+ureq = { version = "2", default-features = false }

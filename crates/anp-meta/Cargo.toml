@@ -1,0 +1,20 @@
+[package]
+name = "anp-meta"
+version = "0.1.0"
+edition = "2021"
+description = "ANP-06 meta-protocol: the framing and the negotiation messages, with a catalog of the protocols this agent implements in place of an LLM"
+license = "MIT"
+
+[dependencies]
+tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
+serde_json = "1"
+ureq = { version = "2", default-features = false, optional = true }
+
+[features]
+default = ["cli"]
+cli = ["dep:ureq"]
+
+[[bin]]
+name = "anp-meta"
+path = "src/main.rs"
+required-features = ["cli"]

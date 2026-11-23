@@ -1,0 +1,22 @@
+[package]
+name = "anp-ad"
+version = "0.1.0"
+edition = "2021"
+description = "ANP-07 agent descriptions: build, validate, sign (eddsa-jcs-2022) and verify against a did:wba document"
+license = "MIT"
+
+[dependencies]
+anp-did = { path = "../anp-did" }
+serde_json = "1"
+ureq = { version = "2", default-features = false, optional = true }
+
+[features]
+default = ["cli"]
+# The command-line tool. Plain http only; add `tls` for https (pulls in rustls).
+cli = ["dep:ureq"]
+tls = ["cli", "ureq/tls"]
+
+[[bin]]
+name = "anp-ad"
+path = "src/main.rs"
+required-features = ["cli"]
