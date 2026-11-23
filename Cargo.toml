@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
-members = ["crates/anp-did", "crates/anp-ad", "crates/anp-e2ee", "crates/anp-httpauth", "crates/anp-resolve", "crates/anp-authz", "crates/anp-cblite", "crates/anp-node", "crates/anp-search", "crates/anp-wns", "crates/anp-meta", "crates/anp-group", "crates/anp-group-mls", "crates/anp-group-host", "xtask"]
+# common/: what both projects share; a2a/: the A2A project; anp/: the ANP project (its xtask runs the end-to-end checks)
+members = ["common/crates/*", "a2a/crates/*", "anp/crates/*", "anp/xtask"]
+# the two desktop apps (a2a/src-tauri, anp/src-tauri) are workspaces of their own
 
 [workspace.dependencies]
 couchbase_lite = { git = "https://github.com/ldoguin/couchbase-lite-rust", rev = "6973ec9b8316685b1da1067670c4386484e5d95f", default-features = false }
