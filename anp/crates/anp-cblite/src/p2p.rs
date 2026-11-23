@@ -51,8 +51,8 @@ pub struct P2p {
     listener: Option<UrlEndpointListener>,
     replicators: Vec<(String, Replicator)>,
     sec: P2pSecurity,
-    /// Every peer URL given to [P2p::connect], so [P2p::reconnect] can dial them again.
-    urls: Vec<String>,
+    /// Every peer URL given to [P2p::connect] or [P2p::connect_gateway] (with the login, for a Sync Gateway), so [P2p::reconnect] can dial them again.
+    urls: Vec<(String, Option<(String, String)>)>,
 }
 
 impl P2p {
@@ -125,10 +125,20 @@ impl P2p {
     /// Continuously push and pull the three A2A collections with the peer at
     /// `url` (a `ws://host:port/db` URL as reported by the peer's `listen`).
     pub fn connect(&mut self, url: &str) -> Result<(), String> {
-        if !self.urls.iter().any(|u| u == url) {
-            self.urls.push(url.to_string());
+        if !self.urls.iter().any(|(u, _)| u == url) {
+            self.urls.push((url.to_string(), None));
         }
-        self.dial(url)
+        self.dial(url, None)
+    }
+
+    /// Continuously push and pull the collections with a Sync Gateway database (`ws://host:4984/db`), logged in as `user`. What this node
+    /// gets back is whatever the gateway's sync function lets that user read: a store gets its own channel only.
+    pub fn connect_gateway(&mut self, url: &str, user: &str, password: &str) -> Result<(), String> {
+        let login = Some((user.to_string(), password.to_string()));
+        if !self.urls.iter().any(|(u, _)| u == url) {
+            self.urls.push((url.to_string(), login.clone()));
+        }
+        self.dial(url, login)
     }
 
     /// Stop dialing every peer. The listener keeps running; [P2p::reconnect] dials again.
@@ -144,13 +154,13 @@ impl P2p {
         if !self.replicators.is_empty() {
             return Ok(());
         }
-        for url in self.urls.clone() {
-            self.dial(&url)?;
+        for (url, login) in self.urls.clone() {
+            self.dial(&url, login)?;
         }
         Ok(())
     }
 
-    fn dial(&mut self, url: &str) -> Result<(), String> {
+    fn dial(&mut self, url: &str, login: Option<(String, String)>) -> Result<(), String> {
         let endpoint = Endpoint::new_with_url(url).map_err(|e| e.to_string())?;
         let collections = self
             .collections()?
@@ -173,8 +183,10 @@ impl P2p {
         }
         let pinned = self.sec.pinned_cert.clone();
         // Present this node's token only when the mesh uses admission (never over plain ws:// for nothing).
-        let authenticator = match (&self.sec.trust, self.sec.admission) {
-            (Some(t), true) => t.credential().map(|(user, token)| Authenticator::create_password(&user, &token)),
+        // A Sync Gateway takes the node's login (its own name and password), not a mesh token.
+        let authenticator = match (&login, &self.sec.trust, self.sec.admission) {
+            (Some((user, password)), _, _) => Some(Authenticator::create_password(user, password)),
+            (None, Some(t), true) => t.credential().map(|(user, token)| Authenticator::create_password(&user, &token)),
             _ => None,
         };
         let cfg = ReplicatorConfiguration {

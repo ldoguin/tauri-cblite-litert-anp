@@ -70,6 +70,7 @@ fn main() {
         "group-host" | "p6-host" => grouphost::run(),
         "fleet-up" => fleet::up(&args),
         "fleet-down" => fleet::down(),
+        "e2e-fleet" => fleet::e2e(),
         "all" => {
             let mut worst = 0;
             for (name, _) in TASKS {
@@ -115,6 +116,7 @@ fn main() {
             eprintln!("  cold-rescue      the demo: the night's ten nodes and the control room at http://127.0.0.1:19102/demo/rescue [--record OUT.mp4]");
             eprintln!("  fleet-up         the fleet's Couchbase Server and Sync Gateway in a local k3d cluster (needs docker, k3d, kubectl, helm) [--no-check]");
             eprintln!("  fleet-down       delete that k3d cluster and its data");
+            eprintln!("  e2e-fleet        two stores and a head office replicating through Sync Gateway only: channels, isolation, a cut link (needs fleet-up first)");
             std::process::exit(if task.is_empty() || task == "help" { 0 } else { 2 });
         }
     };

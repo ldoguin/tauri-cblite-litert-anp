@@ -118,6 +118,10 @@ struct Args {
     resolver_roots: Option<PathBuf>,
     /// Allow those documents to live on private or loopback addresses (closed networks, tests).
     resolver_allow_private: bool,
+    /// Replicate with this Sync Gateway database (`ws://host:4984/db`), as `--sync-user` (default: this node's id) with the password in the environment variable `--sync-password-env`.
+    sync_gateway: Option<String>,
+    sync_user: Option<String>,
+    sync_password_env: Option<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -176,6 +180,9 @@ fn parse_args() -> Result<Args, String> {
         trust_domains: vec![],
         resolver_roots: None,
         resolver_allow_private: false,
+        sync_gateway: None,
+        sync_user: None,
+        sync_password_env: None,
     };
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
@@ -259,6 +266,9 @@ fn parse_args() -> Result<Args, String> {
             "--trust-domain" => a.trust_domains.push(v()?),
             "--resolver-roots" => a.resolver_roots = Some(PathBuf::from(v()?)),
             "--resolver-allow-private" => a.resolver_allow_private = true,
+            "--sync-gateway" => a.sync_gateway = Some(v()?),
+            "--sync-user" => a.sync_user = Some(v()?),
+            "--sync-password-env" => a.sync_password_env = Some(v()?),
             "--direct-messaging" | "--p5" => a.direct_messaging = true,
             "--direct-peer" | "--p5-peer" => a.direct_peers.push(v()?),
             "--e2ee" => {
@@ -311,7 +321,7 @@ impl LinkControl for NodeLink {
 
 /// Start the P2P listener and dial `connect`, on a thread of its own that lives as long as the process
 /// (the handles are not `Send`, so nothing else may touch them). Returns the link handle, the port and URLs.
-fn spawn_p2p(db: Database, sec: P2pSecurity, port: u16, connect: Vec<String>) -> Result<(Arc<NodeLink>, u16, Vec<String>), String> {
+fn spawn_p2p(db: Database, sec: P2pSecurity, port: u16, connect: Vec<String>, gateway: Option<(String, String, String)>) -> Result<(Arc<NodeLink>, u16, Vec<String>), String> {
     let db = SendDb(db);
     let (tx, rx) = std::sync::mpsc::channel::<LinkMsg>();
     let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(u16, Vec<String>), String>>();
@@ -323,6 +333,9 @@ fn spawn_p2p(db: Database, sec: P2pSecurity, port: u16, connect: Vec<String>) ->
             let started = p2p.listen(port).and_then(|(p, urls)| {
                 for url in &connect {
                     p2p.connect(url)?;
+                }
+                if let Some((url, user, password)) = &gateway {
+                    p2p.connect_gateway(url, user, password)?;
                 }
                 Ok((p, urls))
             });
@@ -547,7 +560,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         trust: trust.clone(),
         admission: args.admit,
     };
-    let (link, port, urls) = spawn_p2p(db, sec, args.p2p_port, args.connect.clone())?;
+    // a Sync Gateway to replicate with, logged in as this node (its password from the environment variable `--sync-password-env` names)
+    let gateway = match &args.sync_gateway {
+        Some(url) => {
+            let user = args.sync_user.clone().unwrap_or_else(|| args.id.clone());
+            let var = args.sync_password_env.clone().ok_or("--sync-gateway needs --sync-password-env VAR (the variable holding this node's password)")?;
+            let password = std::env::var(&var).map_err(|_| format!("--sync-password-env: the variable {var} is not set"))?;
+            Some((url.clone(), user, password))
+        }
+        None => None,
+    };
+    let (link, port, urls) = spawn_p2p(db, sec, args.p2p_port, args.connect.clone(), gateway)?;
     hub.set_link_control(link);
     let mut peer_docs: Vec<serde_json::Value> = Vec::new();
     for f in &args.allow_callers {

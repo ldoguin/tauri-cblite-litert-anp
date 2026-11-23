@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::harness::{flag, repo_root, sleep};
+use crate::harness::{did_for, fresh_dir, flag, get_json, poll, post_json, repo_root, require_bins, sleep, strs, work_dir, Checks, Node};
 
 const CLUSTER: &str = "anp-fleet";
 const CTX: &str = "k3d-anp-fleet";
@@ -76,6 +76,117 @@ pub fn down() -> Result<i32, String> {
     step(&format!("Deleting k3d cluster {CLUSTER}"));
     run("k3d", &["cluster", "delete", CLUSTER])?;
     Ok(0)
+}
+
+// ------------------------------------------------------------------ the stores through Sync Gateway (F3)
+
+const PORTS: [u16; 3] = [18995, 18996, 18997];
+
+/// A Sync Gateway user for a node: logged in as the node's id, reading the channels given (per collection).
+fn put_user(name: &str, password: &str, channels: &[String]) -> Result<(), String> {
+    let access: serde_json::Map<String, Value> = COLLECTIONS.iter().map(|c| (c.to_string(), json!({ "admin_channels": channels }))).collect();
+    let user = json!({ "name": name, "password": password, "collection_access": { SCOPE: access } });
+    let (s, b) = http("PUT", &format!("{ADMIN}/{DB}/_user/{name}"), Some(&user), None)?;
+    if s >= 300 {
+        return Err(format!("creating user {name}: {s} {b}"));
+    }
+    Ok(())
+}
+
+fn logs_at(port: u16) -> Vec<Value> {
+    get_json(&format!("http://127.0.0.1:{port}/telemetry"))["logs"].as_array().cloned().unwrap_or_default()
+}
+
+/// The minute of the last reading `port` holds for the log `id`, -1 when it holds none.
+fn minute_of(port: u16, id: &str) -> i64 {
+    logs_at(port).iter().find(|l| l["id"] == id).and_then(|l| l["readings"].as_array().and_then(|r| r.last().cloned())).and_then(|r| r["minute"].as_i64()).unwrap_or(-1)
+}
+
+fn sim_advance(port: u16, minutes: u32) -> u16 {
+    post_json(&format!("http://127.0.0.1:{port}/store/sim/advance"), &json!({ "minutes": minutes }).to_string()).0
+}
+
+fn node_link(port: u16, up: bool) -> u16 {
+    post_json(&format!("http://127.0.0.1:{port}/link"), &json!({ "up": up }).to_string()).0
+}
+
+/// `cargo xtask e2e-fleet` (needs `fleet-up` first): two stores and a head office, each a node replicating with Sync Gateway only, as
+/// itself. Each store's signed records arrive at the head office and in Couchbase Server; a store is given its own channel and no other, so it
+/// holds nothing of the other's; a store whose link is cut keeps working and the head office catches up when it returns.
+pub fn e2e() -> Result<i32, String> {
+    require_bins(&["anp-node"])?;
+    let alive = http("GET", &format!("{ADMIN}/{DB}/"), None, None).map(|(s, b)| s == 200 && b["state"] == "Online").unwrap_or(false);
+    if !alive {
+        return Err("the fleet is not up (no database anp at 127.0.0.1:4985): run `cargo xtask fleet-up` first".into());
+    }
+    let work = work_dir("xtask-fleet");
+    fresh_dir(&work);
+    let mut c = Checks::default();
+    // node ids unique to this run: the documents stay in Server, and an id used before would meet its own old revisions
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) % 1_000_000;
+    let (a, b, hq) = (format!("e2e{stamp}a"), format!("e2e{stamp}b"), format!("e2e{stamp}hq"));
+
+    println!("Sync Gateway users: a channel per store");
+    for (n, var) in [(&a, "ANP_FLEET_PW_A"), (&b, "ANP_FLEET_PW_B"), (&hq, "ANP_FLEET_PW_HQ")] {
+        std::env::set_var(var, format!("pw-{n}"));
+    }
+    put_user(&a, &format!("pw-{a}"), &[format!("store.{a}")])?;
+    put_user(&b, &format!("pw-{b}"), &[format!("store.{b}")])?;
+    put_user(&hq, &format!("pw-{hq}"), &["*".to_string()])?;
+    c.check("a user per node: each store on its own channel, the head office on all", true, "");
+
+    println!("Two stores and a head office, each replicating with Sync Gateway only");
+    let gateway = |var: &str| strs(&["--sync-gateway", &format!("ws://127.0.0.1:4984/{DB}"), "--sync-password-env", var]);
+    let (did_a, did_b) = (did_for(&work, &a, &format!("{a}.test"), &a), did_for(&work, &b, &format!("{b}.test"), &b));
+    let mut sa = Node::start(&work, &a, &a, PORTS[0], &[strs(&["--did-host", &format!("{a}.test"), "--store-sim", "0"]), gateway("ANP_FLEET_PW_A")].concat());
+    let mut sb = Node::start(&work, &b, &b, PORTS[1], &[strs(&["--did-host", &format!("{b}.test"), "--store-sim", "0"]), gateway("ANP_FLEET_PW_B")].concat());
+    let mut ho = Node::start(&work, &hq, &hq, PORTS[2], &[strs(&["--did-host", &format!("{hq}.test"), "--trust-did", &did_a, "--trust-did", &did_b]), gateway("ANP_FLEET_PW_HQ")].concat());
+
+    let units = ["frz-1", "frz-2", "chl-1", "chl-2"];
+    let all_at_hq = || units.iter().all(|u| minute_of(PORTS[2], &format!("{a}::{u}")) == 0 && minute_of(PORTS[2], &format!("{b}::{u}")) == 0);
+    c.check("the head office receives both stores' temperature logs: 4 units each, through Sync Gateway", poll(90, 500, all_at_hq), format!("{} logs", logs_at(PORTS[2]).len()));
+    let l = logs_at(PORTS[2]).into_iter().find(|l| l["id"] == json!(format!("{a}::frz-2"))).unwrap_or(Value::Null);
+    c.check("...signed by each store's DID, and verified on arrival", l["signedBy"]["author"] == json!(a) && l["signedBy"]["did"] == json!(did_a), l["signedBy"].to_string());
+    let in_server = poll(30, 1000, || {
+        query(&format!("SELECT RAW COUNT(*) FROM `{BUCKET}`.`{SCOPE}`.`telemetry` WHERE META().id LIKE 'e2e{stamp}%'")).map(|v| v == ["8"]).unwrap_or(false)
+    });
+    c.check("all eight are documents in Couchbase Server too (fleet.a2a.telemetry)", in_server, "");
+
+    println!("A store sees its own channel and no other");
+    sleep(3);
+    c.check("store A holds its own 4 logs and nothing of store B's", logs_at(PORTS[0]).len() == 4 && logs_at(PORTS[0]).iter().all(|l| l["signedBy"]["author"] == json!(a)), format!("{:?}", logs_at(PORTS[0]).iter().map(|l| l["id"].clone()).collect::<Vec<_>>()));
+    c.check("store B holds its own 4 logs and nothing of store A's", logs_at(PORTS[1]).len() == 4 && logs_at(PORTS[1]).iter().all(|l| l["signedBy"]["author"] == json!(b)), format!("{:?}", logs_at(PORTS[1]).iter().map(|l| l["id"].clone()).collect::<Vec<_>>()));
+    let ks = format!("{DB}.{SCOPE}.telemetry");
+    let pw_b = format!("pw-{b}");
+    let forged = json!({ "trust": { "author": a, "seq": 1, "sig": "x" }, "node": a, "unit": "frz-1", "readings": [] });
+    let (st, body) = http("PUT", &format!("{PUBLIC}/{ks}/{a}::forged"), Some(&forged), Some((&b, &pw_b)))?;
+    c.check("Sync Gateway refuses store B writing a record as store A", st == 403, format!("{st} {body}"));
+    let (st, body) = http("GET", &format!("{PUBLIC}/{ks}/{a}::frz-1"), None, Some((&b, &pw_b)))?;
+    c.check("...and store B reading store A's record", st == 403 || st == 404, format!("{st} {body}"));
+
+    println!("Store A loses its link, keeps working, and the head office catches up");
+    c.check("store A's link is cut", node_link(PORTS[0], false) == 200, "");
+    sleep(2);
+    c.check("store A's cold room advances 60 minutes on its own", sim_advance(PORTS[0], 60) == 200, "");
+    c.check("store B's advances 10, linked", sim_advance(PORTS[1], 10) == 200, "");
+    c.check("the head office sees store B's new readings", poll(60, 500, || minute_of(PORTS[2], &format!("{b}::frz-1")) == 10), minute_of(PORTS[2], &format!("{b}::frz-1")).to_string());
+    c.check("...and nothing newer from store A, cut off", minute_of(PORTS[2], &format!("{a}::frz-1")) == 0, minute_of(PORTS[2], &format!("{a}::frz-1")).to_string());
+    c.check("store A's link comes back", node_link(PORTS[0], true) == 200, "");
+    c.check("the head office catches up with everything store A logged meanwhile", poll(90, 500, || minute_of(PORTS[2], &format!("{a}::frz-1")) == 60), minute_of(PORTS[2], &format!("{a}::frz-1")).to_string());
+    c.check("...a reading every five minutes, none missing", logs_at(PORTS[2]).iter().find(|l| l["id"] == json!(format!("{a}::frz-1"))).map_or(0, |l| l["readings"].as_array().map_or(0, |r| r.len())) == 13, "");
+    c.check("store B still holds only its own", logs_at(PORTS[1]).iter().all(|l| l["signedBy"]["author"] == json!(b)), "");
+    // only this run's stores: the head office reads every channel, and refuses a document by any store it was not told to trust
+    let ours = |r: &Value| [&a, &b].iter().any(|n| r["author"] == json!(n) || r["docId"].as_str().map_or(false, |d| d.starts_with(&format!("{n}::"))));
+    let refused: Vec<Value> = PORTS.iter().flat_map(|p| crate::harness::rejections(*p)).filter(|r| ours(r)).collect();
+    c.check("no document of either store was refused at any node", refused.is_empty(), format!("{refused:?}"));
+
+    sa.kill();
+    sb.kill();
+    ho.kill();
+    for n in [&a, &b, &hq] {
+        let _ = http("DELETE", &format!("{ADMIN}/{DB}/_user/{n}"), None, None);
+    }
+    Ok(c.finish())
 }
 
 // ------------------------------------------------------------------ steps
@@ -278,6 +389,7 @@ fn check() -> Result<i32, String> {
     };
     let (s, body) = http("PUT", &format!("{PUBLIC}/{ks}/{own_id}"), Some(&doc("fleet-check-a")), a)?;
     expect("a store writes a document it authored", s == 201, format!("{s} {body}"));
+    let rev = body["rev"].as_str().unwrap_or_default().to_string();
     let (s, body) = http("PUT", &format!("{PUBLIC}/{ks}/{forged_id}"), Some(&doc("fleet-check-b")), a)?;
     expect("a store cannot write a document as another store", s == 403, format!("{s} {body}"));
     let (s, body) = http("GET", &format!("{PUBLIC}/{ks}/{own_id}"), None, a)?;
@@ -291,6 +403,8 @@ fn check() -> Result<i32, String> {
         query(&format!("SELECT RAW META().id FROM `{BUCKET}`.`{SCOPE}`.`telemetry` USE KEYS '{own_id}'")).map(|v| v.len() == 1).unwrap_or(false)
     });
     expect("the document is in Couchbase Server (fleet.a2a.telemetry)", in_server.is_ok(), in_server.err().unwrap_or_default());
+    // leave nothing behind: a head office reading every channel would refuse a document by a store it does not know
+    let _ = http("DELETE", &format!("{ADMIN}/{ks}/{own_id}?rev={rev}"), None, None);
     for s in stores {
         let _ = http("DELETE", &format!("{ADMIN}/{DB}/_user/{s}"), None, None);
     }

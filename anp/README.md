@@ -511,7 +511,25 @@ cargo xtask fleet-down    # deletes the k3d cluster and its data
 * The sync function ([`fleet/sync.js`](fleet/sync.js)) routes by the signer a node puts in `trust.author`: a store writes only documents it
   signed, into its own channel `store.<node>`; documents no node signed (revocations, tokens) come from head office into `fleet`. Signatures
   are still verified by the nodes that read them.
-* Not yet: the node replicating to Sync Gateway (`--sync-gateway`, step F3 of the plan).
+**Stores through Sync Gateway (F3).** A node replicates with a Sync Gateway database as itself:
+
+```text
+anp-node ... --sync-gateway ws://127.0.0.1:4984/anp [--sync-user NAME] --sync-password-env VAR
+```
+
+`NAME` defaults to the node's id (the sync function lets a store write only documents it signed under that name); the password comes from
+the environment variable, not the command line. The node keeps its peer-to-peer listener and `--connect` links, and its link control
+(`/link`) cuts and restores both. Which documents come back is the gateway's decision: a store user is given its channel `store.<node>`
+and no other, so it never holds another store's records, while a head-office user reads every channel and verifies each document's
+signature against the DIDs it was told to trust (`--trust-did`), and refuses the rest.
+
+```text
+cargo xtask e2e-fleet     # needs fleet-up first: two stores and a head office replicating through Sync Gateway only; 18 checks
+```
+
+It checks that both stores' records arrive at the head office, signed and verified, and in Couchbase Server; that each store holds only
+its own; that Sync Gateway refuses a store writing as, or reading from, another; and that a store whose link is cut keeps working and the
+head office catches up when it returns. The documents the run leaves in Server have ids of their own.
 
 ## Build and test
 
