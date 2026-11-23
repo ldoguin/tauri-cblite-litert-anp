@@ -70,14 +70,14 @@ spec:
       - kind: CouchbaseCollectionGroup
         name: a2a-collections
 ---
-# The node's collections (anp-cblite's `Coll`): inbox, tasks, agents, revocations, telemetry, rescue.
+# The node's collections (anp-cblite's `Coll`): inbox, tasks, agents, revocations, telemetry, rescue, approvals.
 apiVersion: couchbase.com/v2
 kind: CouchbaseCollectionGroup
 metadata:
   name: a2a-collections
   namespace: couchbase
 spec:
-  names: [inbox, tasks, agents, revocations, telemetry, rescue]
+  names: [inbox, tasks, agents, revocations, telemetry, rescue, approvals]
 ---
 # The web console on the host: http://127.0.0.1:18091 (k3d maps it to this node port).
 apiVersion: v1

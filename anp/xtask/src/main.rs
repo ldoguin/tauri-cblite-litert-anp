@@ -4,6 +4,7 @@
 //!
 //! The PowerShell scripts in `scripts/` are the same checks and still there; tasks move here one at a time.
 
+mod approval;
 mod biscuit;
 mod coldrescue;
 mod coldstore;
@@ -13,6 +14,7 @@ mod direct;
 mod e2ee;
 mod fielddid;
 mod fleet;
+mod fleetview;
 mod group;
 mod hardened;
 mod harness;
@@ -71,6 +73,8 @@ fn main() {
         "fleet-up" => fleet::up(&args),
         "fleet-down" => fleet::down(),
         "e2e-fleet" => fleet::e2e(),
+        "e2e-approval" => approval::run(),
+        "e2e-fleet-view" => fleetview::run(&args),
         "all" => {
             let mut worst = 0;
             for (name, _) in TASKS {
@@ -116,6 +120,8 @@ fn main() {
             eprintln!("  cold-rescue      the demo: the night's ten nodes and the control room at http://127.0.0.1:19102/demo/rescue [--record OUT.mp4]");
             eprintln!("  fleet-up         the fleet's Couchbase Server and Sync Gateway in a local k3d cluster (needs docker, k3d, kubectl, helm) [--no-check]");
             eprintln!("  fleet-down       delete that k3d cluster and its data");
+            eprintln!("  e2e-approval     the duty manager's approval as a document signed on a phone and replicated through Sync Gateway; a head office's is ignored (needs fleet-up first)");
+            eprintln!("  e2e-fleet-view   three stores' freezers fail at once; the head office shows them, their agents' phases and spend, live (needs fleet-up first)");
             eprintln!("  e2e-fleet        two stores and a head office replicating through Sync Gateway only: channels, isolation, a cut link (needs fleet-up first)");
             std::process::exit(if task.is_empty() || task == "help" { 0 } else { 2 });
         }

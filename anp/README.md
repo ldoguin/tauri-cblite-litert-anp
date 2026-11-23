@@ -511,6 +511,7 @@ cargo xtask fleet-down    # deletes the k3d cluster and its data
 * The sync function ([`fleet/sync.js`](fleet/sync.js)) routes by the signer a node puts in `trust.author`: a store writes only documents it
   signed, into its own channel `store.<node>`; documents no node signed (revocations, tokens) come from head office into `fleet`. Signatures
   are still verified by the nodes that read them.
+
 **Stores through Sync Gateway (F3).** A node replicates with a Sync Gateway database as itself:
 
 ```text
@@ -530,6 +531,32 @@ cargo xtask e2e-fleet     # needs fleet-up first: two stores and a head office r
 It checks that both stores' records arrive at the head office, signed and verified, and in Couchbase Server; that each store holds only
 its own; that Sync Gateway refuses a store writing as, or reading from, another; and that a store whose link is cut keeps working and the
 head office catches up when it returns. The documents the run leaves in Server have ids of their own.
+
+**The fleet view (F4).** A head office, a node that replicates with the stores and runs no simulation, shows every store at
+`/demo/fleet` (`GET /fleet`, this machine's operator only): each store's units with their temperature and fault, its rescue agent's phase,
+and what it has spent, worst first. It is built only from the replicated `telemetry` and `rescue` documents the node holds and has verified,
+so it needs nothing from a store but the replication link.
+
+```text
+cargo xtask e2e-fleet-view [--hold SECONDS]   # needs fleet-up: three stores' freezers fail at once; 20 checks. --hold keeps the nodes up to look at the page
+```
+
+**Approval as a document (F5).** When a plan is over the budget the agent stops and asks. With `--duty-manager NODE` (repeatable) it takes
+the answer from a signed document in the replicated `approvals` collection, `<store>::<run>::<signer>`, and from nothing else: the HTTP
+approve and decline are refused. The duty manager's phone (a node, with `POST /approvals/decide {store, run, approve, budget?, token?}`) reads
+the question from the store's signed record and writes the approval; it reaches the store through Sync Gateway. The sync function lets a
+node write an approval only into a store's channel it was given, so a phone cannot approve for another store. The store checks who signed:
+an approval from a node that is not a duty manager (a head office, say, which the store trusts for its records) is logged and ignored. The
+signer is in the document's id, so one node's approval can never replace another's.
+
+```text
+cargo xtask e2e-approval  # needs fleet-up: the whole night with a phone as duty manager, a forged approval and one for another store; 21 checks
+```
+
+Both checks start the nodes on this machine next to the k3d cluster. `e2e-approval` runs eleven nodes and a phone, so a busy machine can make a
+company slow: with 40 s as the agent's wait for an answer, a confirmation that came late was counted as no answer (the ledger committed it
+anyway) and the plan ended a deal short, in 1 run of 3 with eight CPU burners running. The wait is 120 s now (it ends when the answers are in), and
+eight runs under the same load passed.
 
 ## Build and test
 

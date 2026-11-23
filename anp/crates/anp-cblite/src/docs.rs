@@ -43,10 +43,12 @@ pub enum Coll {
     Telemetry,
     /// A rescue agent's record of a run (its log, plan, deals and ledger); a document `<node>::<run>` is written only by that node.
     Rescue,
+    /// A duty manager's decision on a store's rescue plan, `<store>::<run>::<signer>`; written by the duty manager's node (a phone), not the store's.
+    Approvals,
 }
 
 impl Coll {
-    pub const ALL: [Coll; 6] = [Coll::Inbox, Coll::Tasks, Coll::Agents, Coll::Revocations, Coll::Telemetry, Coll::Rescue];
+    pub const ALL: [Coll; 7] = [Coll::Inbox, Coll::Tasks, Coll::Agents, Coll::Revocations, Coll::Telemetry, Coll::Rescue, Coll::Approvals];
     pub fn name(self) -> &'static str {
         match self {
             Coll::Inbox => "inbox",
@@ -55,6 +57,7 @@ impl Coll {
             Coll::Revocations => "revocations",
             Coll::Telemetry => "telemetry",
             Coll::Rescue => "rescue",
+            Coll::Approvals => "approvals",
         }
     }
     /// `scope.collection`, the spelling `tauri-plugin-cblite` uses.

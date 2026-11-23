@@ -188,6 +188,9 @@ pub fn is_local_control(path: &str) -> bool {
         || path.starts_with("/anp/quotes/")
         || path == "/rescue"
         || path == "/rescues"
+        || path == "/fleet"
+        || path == "/approvals"
+        || path == "/approvals/decide"
         || path.starts_with("/rescue/")
 }
 

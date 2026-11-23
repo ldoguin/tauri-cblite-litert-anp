@@ -28,8 +28,10 @@ use crate::docs::{Coll, Docs};
 use crate::group_member::GroupMember;
 use crate::quotes::QuoteBuyer;
 
-/// How long the agent waits for the answers to its requests.
-const ANSWER_WAIT: Duration = Duration::from_secs(40);
+/// How long the agent waits for the answers to its requests (quotes, and the confirmation of an acceptance). The wait ends as soon as the
+/// answers are in, so it only costs time when a company never answers. 40 s was too short for a busy machine: a confirmation that came at
+/// 45 s was counted as no answer while the ledger committed it, and the plan ended a deal short.
+const ANSWER_WAIT: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Clone)]
 pub struct Company {
@@ -255,6 +257,11 @@ pub struct Rescue {
     dirty: tokio::sync::Notify,
     /// One write of the record at a time, so the signing sequence only goes forward.
     writing: tokio::sync::Mutex<()>,
+    /// The nodes whose signed approvals this agent acts on (`--duty-manager`). When there are any, the agent takes its approval from a signed
+    /// document in the replicated `approvals` collection and from nothing else: the HTTP approve and decline are refused.
+    duty_managers: Mutex<Vec<String>>,
+    /// Approvals already reported as ignored (`<doc id>|<signer>`), so each is logged once.
+    ignored: Mutex<std::collections::HashSet<String>>,
 }
 
 impl Rescue {
@@ -273,6 +280,8 @@ impl Rescue {
             decided: tokio::sync::Notify::new(),
             dirty: tokio::sync::Notify::new(),
             writing: tokio::sync::Mutex::new(()),
+            duty_managers: Mutex::new(vec![]),
+            ignored: Mutex::new(Default::default()),
         }
     }
 
@@ -466,6 +475,52 @@ impl Rescue {
             }
         });
         Ok(())
+    }
+
+    /// Act only on approvals signed by these nodes, and only as documents (see `duty_managers`).
+    pub fn set_duty_managers(&self, nodes: Vec<String>) {
+        *self.duty_managers.lock().unwrap() = nodes;
+    }
+
+    /// Does this agent take its approval from signed documents only?
+    pub fn documents_only(&self) -> bool {
+        !self.duty_managers.lock().unwrap().is_empty()
+    }
+
+    /// While waiting: look in the replicated `approvals` for a decision on this run of this store. One signed by a duty manager is acted
+    /// on; one signed by anyone else (a peer that is trusted for other things) is logged once and left alone. A document for another store
+    /// or another run is not this agent's business.
+    async fn check_approvals(&self) {
+        let managers = self.duty_managers.lock().unwrap().clone();
+        if managers.is_empty() {
+            return;
+        }
+        let run = self.state.lock().unwrap().run.clone();
+        let node = self.store.node().to_string();
+        let Ok(list) = self.store.docs().list(Coll::Approvals).await else { return };
+        for (id, doc) in list {
+            if doc["store"] != json!(node) || doc["run"] != json!(run) {
+                continue;
+            }
+            let author = doc["trust"]["author"].as_str().unwrap_or("").to_string();
+            if !managers.contains(&author) {
+                if self.ignored.lock().unwrap().insert(format!("{id}|{author}")) {
+                    self.note("awaiting-approval", &format!("an approval signed by {author} is ignored: {author} is not a duty manager"), Some("only a duty manager approves"), Value::Null);
+                }
+                continue;
+            }
+            let approve = doc["approve"].as_bool().unwrap_or(false);
+            self.note(
+                "awaiting-approval",
+                &format!("duty manager {author} {} the plan, in a signed document ({id})", if approve { "approves" } else { "declines" }),
+                Some("a person approves what is over the limit"),
+                json!({ "approval": id, "by": author, "budgetMinor": doc["budgetMinor"] }),
+            );
+            match self.decide(approve, doc["token"].as_str(), doc["budgetMinor"].as_u64()) {
+                Ok(()) => return,
+                Err(e) => self.note("awaiting-approval", &format!("the approval from {author} could not be applied: {e}"), None, Value::Null),
+            }
+        }
     }
 
     /// The duty manager's answer to an escalation.
@@ -719,6 +774,7 @@ impl Rescue {
             self.state.lock().unwrap().approval = Some(decision);
             self.phase("awaiting-approval");
             loop {
+                self.check_approvals().await;
                 if let Some(d) = *self.decision.lock().unwrap() {
                     if !d {
                         self.note("declined", "the duty manager declined: nothing is committed", None, Value::Null);
@@ -727,7 +783,8 @@ impl Rescue {
                     }
                     break;
                 }
-                self.decided.notified().await;
+                // woken by an answer over HTTP, or look again at the replicated documents
+                let _ = tokio::time::timeout(Duration::from_millis(500), self.decided.notified()).await;
             }
             self.note("committing", "the duty manager approved", None, self.buyer.state()["ledger"].clone());
         }

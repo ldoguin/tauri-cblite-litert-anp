@@ -49,6 +49,8 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .route("/demo", get(demo_page))
         .route("/demo/all", get(demo_all_page))
         .route("/demo/rescue", get(rescue_page))
+        .route("/demo/fleet", get(fleet_page))
+        .route("/fleet", get(fleet_get))
         .route("/security/revocations", post(post_revocation))
         .route("/agents/:node/agent-card.json", get(peer_card))
         .route("/agents/:name/:fingerprint/did.json", get(did_document))
@@ -68,6 +70,8 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .route("/anp/quotes", get(quotes_get))
         .route("/anp/quotes/:action", post(quotes_post))
         .route("/rescues", get(rescues_get))
+        .route("/approvals", get(approvals_get))
+        .route("/approvals/decide", post(approvals_decide))
         .route("/rescue", get(rescue_get))
         .route("/rescue/:action", post(rescue_post))
         .route("/anp/meta", post(meta_message))
@@ -174,6 +178,9 @@ async fn rescue_post(State(hub): State<Arc<Hub>>, Path(action): Path<String>, ad
     }
     let Some(r) = hub.rescue() else { return (StatusCode::NOT_FOUND, "this node runs no rescue agent (--rescue)\n").into_response() };
     let v: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    if r.documents_only() && matches!(action.as_str(), "approve" | "decline") {
+        return (StatusCode::FORBIDDEN, "this agent takes its approval from a duty manager's signed document (--duty-manager), not from here\n").into_response();
+    }
     let done = match action.as_str() {
         // `{"paceMs": 4000}`: a demo's pace (the agent dwells on each phase); none: full speed
         "start" => r.start(v["paceMs"].as_u64().unwrap_or(0)),
@@ -264,6 +271,60 @@ async fn telemetry_get(State(hub): State<Arc<Hub>>, addr: Option<ConnectInfo<Soc
     match crate::coldstore::telemetry(&hub.docs).await {
         Ok(v) => Json(json!({ "logs": v })).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}\n")).into_response(),
+    }
+}
+
+/// Every approval this node holds (its own and replicated), as verified.
+async fn approvals_get(State(hub): State<Arc<Hub>>, addr: Option<ConnectInfo<SocketAddr>>, headers: HeaderMap) -> Response {
+    if !local_caller(addr.as_ref(), &headers) {
+        return not_local();
+    }
+    match hub.docs.list(crate::docs::Coll::Approvals).await {
+        Ok(list) => {
+            let v: Vec<Value> = list
+                .into_iter()
+                .map(|(id, mut d)| {
+                    d["id"] = json!(id);
+                    let signed = json!({ "author": d["trust"]["author"], "did": d["trust"]["did"] });
+                    if let Some(o) = d.as_object_mut() {
+                        o.remove("trust");
+                    }
+                    d["signedBy"] = signed;
+                    d
+                })
+                .collect();
+            Json(json!({ "approvals": v })).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}\n")).into_response(),
+    }
+}
+
+/// The duty manager's phone: sign an approval (or a refusal) of a store's rescue run and put it in the replicated `approvals`, from where it
+/// reaches the store. `{store, run, approve, budget?, token?}`: `budget` is the new total in euros, `token` a new spending token from the authority.
+async fn approvals_decide(State(hub): State<Arc<Hub>>, addr: Option<ConnectInfo<SocketAddr>>, headers: HeaderMap, body: Bytes) -> Response {
+    if !local_caller(addr.as_ref(), &headers) {
+        return not_local();
+    }
+    let v: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let (Some(store), Some(run), Some(approve)) = (v["store"].as_str(), v["run"].as_str(), v["approve"].as_bool()) else {
+        return (StatusCode::BAD_REQUEST, "give {store, run, approve}\n").into_response();
+    };
+    let budget = match v["budget"].as_str().map(str::to_string).or_else(|| v["budget"].as_u64().map(|n| n.to_string())) {
+        Some(x) => match anp_authz::parse_amount_minor(&x) {
+            Ok(m) => Some(m),
+            Err(e) => return (StatusCode::BAD_REQUEST, format!("{e}\n")).into_response(),
+        },
+        None => None,
+    };
+    // the signer is in the id: another node's approval of the same run is another document, and cannot replace this one
+    let id = format!("{store}::{run}::{}", hub.node_id);
+    let doc = json!({
+        "kind": "approval", "store": store, "run": run, "approve": approve, "budgetMinor": budget, "token": v["token"],
+        "by": hub.node_id, "decidedAt": chrono::Utc::now().to_rfc3339(),
+    });
+    match hub.docs.put(crate::docs::Coll::Approvals, &id, doc).await {
+        Ok(()) => Json(json!({ "approval": id, "by": hub.node_id })).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, format!("{e}\n")).into_response(),
     }
 }
 
@@ -695,6 +756,22 @@ async fn demo_page() -> axum::response::Html<&'static str> {
 /// node's own endpoints, which answer only this machine; `?autoplay=1` plays the night with captions (what the recording films).
 async fn rescue_page() -> axum::response::Html<&'static str> {
     axum::response::Html(include_str!("rescue.html"))
+}
+
+/// The head office's fleet view (see `fleet.html`): every store, its failing units, its agent's phase and spend. Reads `/fleet`.
+async fn fleet_page() -> axum::response::Html<&'static str> {
+    axum::response::Html(include_str!("fleet.html"))
+}
+
+/// Every store whose signed records this node holds, with its units, its rescue agent's phase and its spend (see `fleet`).
+async fn fleet_get(State(hub): State<Arc<Hub>>, addr: Option<ConnectInfo<SocketAddr>>, headers: HeaderMap) -> Response {
+    if !local_caller(addr.as_ref(), &headers) {
+        return not_local();
+    }
+    match crate::fleet::view(&hub.docs).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}\n")).into_response(),
+    }
 }
 
 /// The control-room view: the three devices side by side with a live topology (see `demo-all.html`).

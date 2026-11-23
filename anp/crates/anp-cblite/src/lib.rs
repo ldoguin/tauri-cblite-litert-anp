@@ -23,6 +23,7 @@ pub mod meta;
 pub mod group_host;
 pub mod group_member;
 pub mod coldstore;
+pub mod fleet;
 pub mod quotes;
 pub mod rescue;
 pub mod discovery;

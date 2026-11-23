@@ -1203,6 +1203,13 @@ fn authorize(coll: Coll, id: &str, content: &Value, author: &str) -> Result<(), 
             field("node") == Some(author) && id.strip_prefix(author).map_or(false, |rest| rest.starts_with("::")),
             format!("'{author}' may only publish its own rescue records, not '{id}'"),
         ),
+        // an approval is signed by whoever decides, not by the store it is for: the id names the store, the run and the signer (so one node's
+        // approval can never replace another's), and `by` is the signer.
+        // Whether that signer may approve for the store is the store's call (its duty managers), made where the approval is acted on.
+        Coll::Approvals => ok(
+            field("by") == Some(author) && matches!((field("store"), field("run")), (Some(s), Some(r)) if id == format!("{s}::{r}::{author}")),
+            format!("'{author}' may only sign an approval of its own, named <store>::<run>::<signer> (not '{id}')"),
+        ),
         Coll::Inbox => ok(
             field("from") == Some(author),
             format!("'{author}' cannot issue a command from '{}'", field("from").unwrap_or("?")),
@@ -2189,6 +2196,25 @@ mod tests {
         assert!(hq.verify(Coll::Telemetry, "store::frz-1", &doc).is_ok());
         doc["readings"][0]["tempC"] = json!(-20.0);
         assert!(hq.verify(Coll::Telemetry, "store::frz-1", &doc).is_err(), "a rewritten reading");
+    }
+
+    #[test]
+    fn an_approval_is_signed_by_whoever_decides_and_names_its_store_and_run() {
+        let approval = |by: &str, store: &str, run: &str| json!({ "kind": "approval", "store": store, "run": run, "approve": true, "budgetMinor": 1_100_000, "by": by });
+        assert!(authorize(Coll::Approvals, "store::r1::phone", &approval("phone", "store", "r1"), "phone").is_ok(), "the phone signs, the store is only named");
+        assert!(authorize(Coll::Approvals, "store::r1", &approval("phone", "store", "r1"), "phone").is_err(), "the id names the signer too");
+        assert!(authorize(Coll::Approvals, "store::r1::hq", &approval("phone", "store", "r1"), "hq").is_err(), "signed by someone else than `by`");
+        assert!(authorize(Coll::Approvals, "store::r1::phone", &approval("phone", "store", "r1"), "hq").is_err(), "an id that names another signer: one cannot take another's place");
+        assert!(authorize(Coll::Approvals, "other::r1::phone", &approval("phone", "store", "r1"), "phone").is_err(), "the id names another store");
+        assert!(authorize(Coll::Approvals, "store::r2::phone", &approval("phone", "store", "r1"), "phone").is_err(), "the id names another run");
+        assert!(authorize(Coll::Approvals, "store", &json!({ "by": "phone" }), "phone").is_err(), "no store and run");
+        let (phone, store) = (node("phone", 1), node("store", 2));
+        store.enroll("phone", &phone.public_key()).unwrap();
+        let mut doc = approval("phone", "store", "r1");
+        phone.sign(Coll::Approvals, "store::r1::phone", &mut doc);
+        assert!(store.verify(Coll::Approvals, "store::r1::phone", &doc).is_ok());
+        doc["budgetMinor"] = json!(99_000_000);
+        assert!(store.verify(Coll::Approvals, "store::r1::phone", &doc).is_err(), "a raised budget breaks the signature");
     }
 
     #[test]

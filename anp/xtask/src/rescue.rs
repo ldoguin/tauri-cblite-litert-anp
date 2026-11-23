@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 const HOST: u16 = 19101;
-const STORE: u16 = 19102;
+pub(crate) const STORE: u16 = 19102;
 const SELLERS: [(&str, &str, u16); 8] = [
     ("frostline", "carrier", 19103),
     ("polar", "carrier", 19104),
@@ -48,15 +48,15 @@ fn peer(doc: &Path, did: &str, port: u16) -> Vec<String> {
     strs(&["--allow-caller", &doc.display().to_string(), "--direct-peer", &format!("{did}=http://127.0.0.1:{port}/anp/direct")])
 }
 
-fn rescue() -> Value {
+pub(crate) fn rescue() -> Value {
     get_json(&format!("http://127.0.0.1:{STORE}/rescue"))
 }
 
-fn act(path: &str, body: Value) -> (u16, Value) {
+pub(crate) fn act(path: &str, body: Value) -> (u16, Value) {
     post_json(&format!("http://127.0.0.1:{STORE}{path}"), &body.to_string())
 }
 
-fn wait_phase(phases: &[&str], secs: u32) -> String {
+pub(crate) fn wait_phase(phases: &[&str], secs: u32) -> String {
     let mut p = String::new();
     poll(secs * 2, 500, || {
         p = rescue()["phase"].as_str().unwrap_or_default().to_string();
@@ -66,7 +66,7 @@ fn wait_phase(phases: &[&str], secs: u32) -> String {
 }
 
 /// Does the agent's log have a line containing `text` (and, if given, decided by `rule`)?
-fn logged(r: &Value, text: &str, rule: Option<&str>) -> bool {
+pub(crate) fn logged(r: &Value, text: &str, rule: Option<&str>) -> bool {
     r["log"].as_array().map_or(false, |l| l.iter().any(|e| e["text"].as_str().map_or(false, |t| t.contains(text)) && rule.map_or(true, |ru| e["rule"] == ru)))
 }
 
@@ -140,6 +140,11 @@ pub const STORE_PORT: u16 = STORE;
 /// Bring up the night's ten nodes: the retailer's authority and the store's spending token (€6,000 per commitment), eight companies on
 /// their own domains, a group host, and the store with its cold room (clock stopped), buying desk and agent.
 pub fn bring_up(work: &Path) -> Result<Night, String> {
+    bring_up_with(work, &[])
+}
+
+/// [`bring_up`], with more options for the store's node (a Sync Gateway, a duty manager, ...).
+pub fn bring_up_with(work: &Path, extra_store: &[String]) -> Result<Night, String> {
     println!("Eleven nodes: the store, eight companies, a group host, the head office");
     let root = root_key(work, "retailer");
     let work = work.to_path_buf();
@@ -178,6 +183,7 @@ pub fn bring_up(work: &Path) -> Result<Night, String> {
         base("store", STORE),
         strs(&["--tls", "--admit", "--trust-did", &hq_did]),
         strs(&["--store-sim", "0", "--spend-token", &token.display().to_string(), "--spend-root", &root, "--budget", "6000", "--site", "store-0412", "--rescue", &dir_file.display().to_string()]),
+        extra_store.to_vec(),
     ]
     .concat();
     for (_, _, did, doc, port) in &sellers {
@@ -195,7 +201,7 @@ pub fn bring_up(work: &Path) -> Result<Night, String> {
 }
 
 /// The head office's port: it holds a replica of what the store signs, and sends the store nothing.
-pub const HQ: u16 = 19112;
+pub(crate) const HQ: u16 = 19112;
 
 fn hq_records() -> Vec<Value> {
     get_json(&format!("http://127.0.0.1:{HQ}/rescues"))["records"].as_array().cloned().unwrap_or_default()

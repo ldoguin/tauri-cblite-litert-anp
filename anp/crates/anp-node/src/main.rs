@@ -122,6 +122,8 @@ struct Args {
     sync_gateway: Option<String>,
     sync_user: Option<String>,
     sync_password_env: Option<String>,
+    /// The rescue agent acts only on approvals signed by these nodes, as documents (`--rescue` agents; repeatable).
+    duty_managers: Vec<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -183,6 +185,7 @@ fn parse_args() -> Result<Args, String> {
         sync_gateway: None,
         sync_user: None,
         sync_password_env: None,
+        duty_managers: vec![],
     };
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
@@ -269,6 +272,7 @@ fn parse_args() -> Result<Args, String> {
             "--sync-gateway" => a.sync_gateway = Some(v()?),
             "--sync-user" => a.sync_user = Some(v()?),
             "--sync-password-env" => a.sync_password_env = Some(v()?),
+            "--duty-manager" => a.duty_managers.push(v()?),
             "--direct-messaging" | "--p5" => a.direct_messaging = true,
             "--direct-peer" | "--p5-peer" => a.direct_peers.push(v()?),
             "--e2ee" => {
@@ -671,6 +675,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             None => vec![],
         };
         hub.set_rescue(directory, args.rescue_search.clone())?;
+        if !args.duty_managers.is_empty() {
+            hub.rescue().ok_or("the rescue agent did not start")?.set_duty_managers(args.duty_managers.clone());
+        }
+    } else if !args.duty_managers.is_empty() {
+        return Err("--duty-manager is for a store's rescue agent: give --rescue or --rescue-search too".into());
     }
     if let Some(model) = &args.rescue_model {
         let rescue = hub.rescue().ok_or("--rescue-model advises the rescue agent: give --rescue or --rescue-search too")?;

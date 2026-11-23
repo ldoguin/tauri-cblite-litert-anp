@@ -27,11 +27,11 @@ const NS: &str = "couchbase";
 const SERVER_IMAGE: &str = "couchbase/server:enterprise-8.0.2";
 const SGW_IMAGE: &str = "couchbase/sync-gateway:4.1.2-community";
 const OPERATOR_CHART: &str = "2.93.0";
-const DB: &str = "anp";
-const BUCKET: &str = "fleet";
-const SCOPE: &str = "a2a";
-const COLLECTIONS: [&str; 6] = ["inbox", "tasks", "agents", "revocations", "telemetry", "rescue"];
-const ADMIN: &str = "http://127.0.0.1:4985";
+pub(crate) const DB: &str = "anp";
+pub(crate) const BUCKET: &str = "fleet";
+pub(crate) const SCOPE: &str = "a2a";
+const COLLECTIONS: [&str; 7] = ["inbox", "tasks", "agents", "revocations", "telemetry", "rescue", "approvals"];
+pub(crate) const ADMIN: &str = "http://127.0.0.1:4985";
 const PUBLIC: &str = "http://127.0.0.1:4984";
 pub const CONSOLE: &str = "http://127.0.0.1:18091";
 const USER: &str = "Administrator";
@@ -83,7 +83,7 @@ pub fn down() -> Result<i32, String> {
 const PORTS: [u16; 3] = [18995, 18996, 18997];
 
 /// A Sync Gateway user for a node: logged in as the node's id, reading the channels given (per collection).
-fn put_user(name: &str, password: &str, channels: &[String]) -> Result<(), String> {
+pub(crate) fn put_user(name: &str, password: &str, channels: &[String]) -> Result<(), String> {
     let access: serde_json::Map<String, Value> = COLLECTIONS.iter().map(|c| (c.to_string(), json!({ "admin_channels": channels }))).collect();
     let user = json!({ "name": name, "password": password, "collection_access": { SCOPE: access } });
     let (s, b) = http("PUT", &format!("{ADMIN}/{DB}/_user/{name}"), Some(&user), None)?;
@@ -93,7 +93,7 @@ fn put_user(name: &str, password: &str, channels: &[String]) -> Result<(), Strin
     Ok(())
 }
 
-fn logs_at(port: u16) -> Vec<Value> {
+pub(crate) fn logs_at(port: u16) -> Vec<Value> {
     get_json(&format!("http://127.0.0.1:{port}/telemetry"))["logs"].as_array().cloned().unwrap_or_default()
 }
 
@@ -461,7 +461,7 @@ fn kjson(args: &[&str]) -> Result<Value, String> {
 }
 
 /// A SQL++ statement run in the Server pod (its image has curl; nothing on the host needs the query port). The `results`.
-fn query(statement: &str) -> Result<Vec<String>, String> {
+pub(crate) fn query(statement: &str) -> Result<Vec<String>, String> {
     let out = run(
         "kubectl",
         &[
@@ -475,7 +475,7 @@ fn query(statement: &str) -> Result<Vec<String>, String> {
 }
 
 /// An HTTP call to Sync Gateway: the status and the JSON body (Null when there is none). Only a transport error is an `Err`.
-fn http(method: &str, url: &str, body: Option<&Value>, auth: Option<(&str, &str)>) -> Result<(u16, Value), String> {
+pub(crate) fn http(method: &str, url: &str, body: Option<&Value>, auth: Option<(&str, &str)>) -> Result<(u16, Value), String> {
     let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(20)).build();
     let mut req = agent.request(method, url);
     if let Some((u, p)) = auth {
