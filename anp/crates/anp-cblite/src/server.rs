@@ -66,6 +66,8 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .route("/telemetry", get(telemetry_get))
         .route("/anp/quotes", get(quotes_get))
         .route("/anp/quotes/:action", post(quotes_post))
+        .route("/rescue", get(rescue_get))
+        .route("/rescue/:action", post(rescue_post))
         .route("/anp/meta", post(meta_message))
         .route("/anp/meta/ws", get(meta_ws))
         .route("/anp/groups", post(group_host_rpc))
@@ -148,6 +150,45 @@ async fn store_sim_post(State(hub): State<Arc<Hub>>, Path(action): Path<String>,
     };
     match r {
         Ok(v) => Json(v).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, format!("{e}\n")).into_response(),
+    }
+}
+
+/// The store's agent: its phase, its log of steps and decisions (with the rule behind each), the plan, a pending approval, the outcome.
+async fn rescue_get(State(hub): State<Arc<Hub>>, addr: Option<ConnectInfo<SocketAddr>>, headers: HeaderMap) -> Response {
+    if !local_caller(addr.as_ref(), &headers) {
+        return not_local();
+    }
+    match hub.rescue() {
+        Some(r) => Json(r.status()).into_response(),
+        None => (StatusCode::NOT_FOUND, "this node runs no rescue agent (--rescue)\n").into_response(),
+    }
+}
+
+/// `start`; `approve` `{budget?, token?}` (the duty manager: a new budget in euros, a new token from the authority); `decline`.
+async fn rescue_post(State(hub): State<Arc<Hub>>, Path(action): Path<String>, addr: Option<ConnectInfo<SocketAddr>>, headers: HeaderMap, body: Bytes) -> Response {
+    if !local_caller(addr.as_ref(), &headers) {
+        return not_local();
+    }
+    let Some(r) = hub.rescue() else { return (StatusCode::NOT_FOUND, "this node runs no rescue agent (--rescue)\n").into_response() };
+    let v: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let done = match action.as_str() {
+        "start" => r.start(),
+        "approve" => {
+            let budget = match v["budget"].as_str().map(str::to_string).or_else(|| v["budget"].as_u64().map(|n| n.to_string())) {
+                Some(x) => match anp_authz::parse_amount_minor(&x) {
+                    Ok(m) => Some(m),
+                    Err(e) => return (StatusCode::BAD_REQUEST, format!("{e}\n")).into_response(),
+                },
+                None => None,
+            };
+            r.decide(true, v["token"].as_str(), budget)
+        }
+        "decline" => r.decide(false, None, None),
+        other => return (StatusCode::NOT_FOUND, format!("no action {other}: start, approve or decline\n")).into_response(),
+    };
+    match done {
+        Ok(()) => Json(r.status()).into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, format!("{e}\n")).into_response(),
     }
 }

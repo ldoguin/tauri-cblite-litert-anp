@@ -82,6 +82,8 @@ struct Args {
     spend_root: Option<String>,
     budget: Option<String>,
     site: Option<String>,
+    /// Run the store's rescue agent, with this directory of companies it may call on.
+    rescue: Option<PathBuf>,
     /// Run the group host without `--require-auth`: anyone who can reach it can collect any device's notifications.
     group_open_mailboxes: bool,
     /// DIDs this node trusts (DID mode), repeatable.
@@ -148,6 +150,7 @@ fn parse_args() -> Result<Args, String> {
         spend_root: None,
         budget: None,
         site: None,
+        rescue: None,
         group_open_mailboxes: false,
         trust_dids: vec![],
         print_did: false,
@@ -220,6 +223,7 @@ fn parse_args() -> Result<Args, String> {
         "--spend-root" => a.spend_root = Some(v()?),
         "--budget" => a.budget = Some(v()?),
         "--site" => a.site = Some(v()?),
+        "--rescue" => a.rescue = Some(PathBuf::from(v()?)),
         "--store-sim" =>a.store_sim = Some(v()?.parse().map_err(|e| format!("--store-sim wants simulated minutes per second (0 = manual): {e}"))?),
         "--group-member" => {
                 a.group_member = Some(v()?);
@@ -246,7 +250,7 @@ fn parse_args() -> Result<Args, String> {
                 a.secure = true;
             }
             "-h" | "--help" => {
-                return Err("usage: anp-node [--name N] [--id ID] [--data DIR] [--http-port P] [--p2p-port P] [--connect ws://host:port/a2a]...\n       LLM agent (build with --features litert, Linux/macOS): [--model FILE.litertlm] [--role R] [--persona TEXT] [--max-tokens N]\n       Security: [--secure] [--trust trust.json] [--trust-peer name=PUBKEY]... [--print-pubkey]\n       Biscuit:  [--root-key ROOT_PUBKEY --token FILE [--revoked FILE]]  (tokens come from anp-admin)\n       Built-in agent: [--agent echo|reviewer|claims|writer]\n       DID (ANP): [--did-host HOST[:PORT] [--trust-did DID]... [--print-did] [--e2ee] [--handle LOCAL]... [--meta-protocol NAME[=FILE]]... [--group-host [--group-open-mailboxes]] [--group-member HOST_URL]]\n       Cold-stock scenario: [--store-sim MIN_PER_SEC]  (simulated store 0412; its temperature log is signed and replicated; needs a secure mode)\n       Quotes (need --direct-messaging): [--counterparty frostline|polar|coldchain|rungis-cold|orly-freeze|foodbank|insurer|supplier --buyer-root ROOT_PUBKEY...]\n                                         [--spend-token FILE --spend-root ROOT_PUBKEY --budget EUROS [--site NAME]]\n       Domains: [--trust-domain HOST[:PORT]]... [--resolver-roots CA.pem] [--resolver-allow-private]  (DIDs of a trusted domain are fetched over HTTPS)\n       Direct messages (ANP-09 P5): [--direct-messaging [--direct-peer DID=URL]...]  (needs --e2ee; peers are the --allow-caller documents)\n       ANP-02: [--require-auth [--public-origin https://HOST[:PORT]] [--allow-caller DID_DOC.json]... [--allow-legacy-auth]]\n       Transport/at rest: [--tls] [--pin-cert PEM] [--admit] [--db-key-env VAR]".into())
+                return Err("usage: anp-node [--name N] [--id ID] [--data DIR] [--http-port P] [--p2p-port P] [--connect ws://host:port/a2a]...\n       LLM agent (build with --features litert, Linux/macOS): [--model FILE.litertlm] [--role R] [--persona TEXT] [--max-tokens N]\n       Security: [--secure] [--trust trust.json] [--trust-peer name=PUBKEY]... [--print-pubkey]\n       Biscuit:  [--root-key ROOT_PUBKEY --token FILE [--revoked FILE]]  (tokens come from anp-admin)\n       Built-in agent: [--agent echo|reviewer|claims|writer]\n       DID (ANP): [--did-host HOST[:PORT] [--trust-did DID]... [--print-did] [--e2ee] [--handle LOCAL]... [--meta-protocol NAME[=FILE]]... [--group-host [--group-open-mailboxes]] [--group-member HOST_URL]]\n       Cold-stock scenario: [--store-sim MIN_PER_SEC]  (simulated store 0412; its temperature log is signed and replicated; needs a secure mode)\n       Quotes (need --direct-messaging): [--counterparty frostline|polar|coldchain|rungis-cold|orly-freeze|foodbank|insurer|supplier --buyer-root ROOT_PUBKEY...]\n                                         [--spend-token FILE --spend-root ROOT_PUBKEY --budget EUROS [--site NAME]]\n       The store's agent: [--rescue DIRECTORY.json]  (needs --store-sim and --spend-token; uses --group-member when given)\n       Domains: [--trust-domain HOST[:PORT]]... [--resolver-roots CA.pem] [--resolver-allow-private]  (DIDs of a trusted domain are fetched over HTTPS)\n       Direct messages (ANP-09 P5): [--direct-messaging [--direct-peer DID=URL]...]  (needs --e2ee; peers are the --allow-caller documents)\n       ANP-02: [--require-auth [--public-origin https://HOST[:PORT]] [--allow-caller DID_DOC.json]... [--allow-legacy-auth]]\n       Transport/at rest: [--tls] [--pin-cert PEM] [--admit] [--db-key-env VAR]".into())
             }
             other => return Err(format!("unknown argument {other}")),
         }
@@ -579,6 +583,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err("--group-member needs DID mode (--did-host)".into());
         }
         hub.set_group_member(anp_cblite::group_member::GroupMember::new(t, url, &args.data, peer_docs.clone(), domain_trust.clone())?);
+    }
+    if let Some(f) = &args.rescue {
+        let text = std::fs::read_to_string(f).map_err(|e| format!("{}: {e}", f.display()))?;
+        let dir: serde_json::Value = serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|e| format!("{}: {e}", f.display()))?;
+        hub.set_rescue(anp_cblite::rescue::read_directory(&dir)?)?;
     }
     hub.set_posture(serde_json::json!({
         "tls": args.tls,

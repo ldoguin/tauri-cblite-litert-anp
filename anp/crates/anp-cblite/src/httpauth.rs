@@ -186,6 +186,8 @@ pub fn is_local_control(path: &str) -> bool {
         || path == "/telemetry"
         || path == "/anp/quotes"
         || path.starts_with("/anp/quotes/")
+        || path == "/rescue"
+        || path.starts_with("/rescue/")
 }
 
 fn unauthorized(origin: &str, why: &str) -> Response {

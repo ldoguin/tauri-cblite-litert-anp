@@ -154,6 +154,8 @@ pub struct Hub {
     /// The quote desks (see `quotes`): a counterparty's, the store's.
     quote_seller: Mutex<Option<Arc<crate::quotes::QuoteSeller>>>,
     quote_buyer: Mutex<Option<Arc<crate::quotes::QuoteBuyer>>>,
+    /// The store's agent (see `rescue`).
+    rescue: Mutex<Option<Arc<crate::rescue::Rescue>>>,
 }
 
 impl Hub {
@@ -190,6 +192,7 @@ impl Hub {
             store_sim: Mutex::new(None),
             quote_seller: Mutex::new(None),
             quote_buyer: Mutex::new(None),
+            rescue: Mutex::new(None),
         });
 
         // Task changes (local or replicated) -> broadcast for waiters/streams.
@@ -342,6 +345,18 @@ impl Hub {
 
     pub fn quote_buyer(&self) -> Option<Arc<crate::quotes::QuoteBuyer>> {
         self.quote_buyer.lock().unwrap().clone()
+    }
+
+    /// The store's agent: needs the store simulation and the buying desk (set first); uses group membership if there is one.
+    pub fn set_rescue(&self, directory: Vec<crate::rescue::Company>) -> Result<(), String> {
+        let store = self.store_sim().ok_or("the rescue agent needs the store's cold room (--store-sim)")?;
+        let buyer = self.quote_buyer().ok_or("the rescue agent needs a buying desk (--spend-token)")?;
+        *self.rescue.lock().unwrap() = Some(Arc::new(crate::rescue::Rescue::new(directory, store, buyer, self.group_member())));
+        Ok(())
+    }
+
+    pub fn rescue(&self) -> Option<Arc<crate::rescue::Rescue>> {
+        self.rescue.lock().unwrap().clone()
     }
 
     pub fn note_http_refusal(&self, why: &str) {

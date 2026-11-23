@@ -63,7 +63,7 @@ impl Profile {
         Some(match id {
             "frostline" => Profile { base_minor: euros(4_000), per_pallet_minor: euros(1_800), terms: json!({ "arrivesIn": "35 min", "vehicle": "reefer -25 °C" }), ..Profile::new(id, "FrostLine Logistics", "carrier", &["transport"]) },
             "polar" => Profile { unavailable: Some("no refrigerated truck free before 06:00".into()), ..Profile::new(id, "Polar Express", "carrier", &["transport"]) },
-            "coldchain" => Profile { base_minor: euros(1_500), per_pallet_minor: euros(1_300), terms: json!({ "arrivesIn": "45 min", "vehicle": "reefer -25 °C" }), ..Profile::new(id, "ColdChain Rungis", "carrier", &["transport"]) },
+            "coldchain" => Profile { base_minor: euros(1_500), per_pallet_minor: euros(1_300), terms: json!({ "arrivesIn": "40 min", "vehicle": "reefer -25 °C" }), ..Profile::new(id, "ColdChain Rungis", "carrier", &["transport"]) },
             "rungis-cold" => Profile { per_pallet_minor: euros(900), capacity_pallets: Some(2), terms: json!({ "storage": "-24 °C", "for": "72 h" }), ..Profile::new(id, "Rungis Cold Store", "warehouse", &["storage"]) },
             "orly-freeze" => Profile { per_pallet_minor: euros(1_500), capacity_pallets: Some(10), terms: json!({ "storage": "-22 °C", "for": "72 h" }), ..Profile::new(id, "Orly Freeze", "warehouse", &["storage"]) },
             "foodbank" => Profile { capacity_pallets: Some(2), valid_minutes: 60, terms: json!({ "accepts": "chilled food within its use-by date", "collectBy": "04:00" }), ..Profile::new(id, "Banque Alimentaire 94", "foodbank", &["donation"]) },
