@@ -1,15 +1,15 @@
-//! The node as an ANP P6 group host (`--p6-host`): `anp-group-host` behind HTTP, with the node's DID documents as its address book.
+//! The node as a group host for end-to-end encrypted groups (ANP-09 "P6", `--group-host`): `anp-group-host` behind HTTP, with the node's DID documents as its address book.
 //!
-//! * `POST /anp/p6`: JSON-RPC for `group.e2ee.publish_key_package`, `get_key_package`, `create`, `add`, `remove`, `send` and this project's
+//! * `POST /anp/groups` (also the old `/anp/p6`): JSON-RPC for `group.e2ee.publish_key_package`, `get_key_package`, `create`, `add`, `remove`, `send` and this project's
 //!   `group.e2ee.pull` (a device collects its notifications and acknowledges the ones it has; with `wait_ms` (at most 30000) the request is held until
 //!   something is delivered, which is this host's push).
-//! * `POST /anp/p6/provision` `{"name": "blue"}`: make a group DID on this node's domain; the node keeps its key (it signs the group's
+//! * `POST /anp/groups/provision` `{"name": "blue"}`: make a group DID on this node's domain; the node keeps its key (it signs the group's
 //!   receipts). The group's DID document is served at the usual path (`/groups/<name>/<e1_fingerprint>/did.json`).
 //! * State (groups, key packages, mailboxes, group keys) is kept in `<data>/p6-host.json`.
 //!
 //! Who is who: a submission proves its sender with its own origin proof (checked against the sender's DID document), so the HTTP
 //! layer does not have to. A mailbox is another matter: `pull` hands out notifications, so with `--require-auth` the HTTP caller
-//! must be the device's DID, and the node refuses to run a P6 host without `--require-auth` unless started with `--p6-open-mailboxes`.
+//! must be the device's DID, and the node refuses to run a P6 host without `--require-auth` unless started with `--group-open-mailboxes`.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -31,7 +31,7 @@ impl Docs for NodeDocs {
     }
 }
 
-pub struct P6 {
+pub struct GroupHostService {
     host: Mutex<Host>,
     file: PathBuf,
     domains: Option<Arc<DomainTrust>>,
@@ -44,9 +44,9 @@ fn now() -> String {
     chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
-impl P6 {
+impl GroupHostService {
     /// `authority` is `host[:port]` of this node's DID; `docs` the documents it was given.
-    pub fn new(authority: &str, dir: &std::path::Path, docs: Vec<Value>, domains: Option<Arc<DomainTrust>>) -> Result<P6, String> {
+    pub fn new(authority: &str, dir: &std::path::Path, docs: Vec<Value>, domains: Option<Arc<DomainTrust>>) -> Result<GroupHostService, String> {
         let mut fixed = std::collections::HashMap::new();
         for d in docs {
             if let Some(id) = d["id"].as_str() {
@@ -55,11 +55,12 @@ impl P6 {
         }
         let known: std::collections::HashSet<String> = fixed.keys().cloned().collect();
         let mut host = Host::new(authority, Arc::new(NodeDocs { fixed, domains: domains.clone() }), Box::new(now));
-        let file = dir.join("p6-host.json");
+        crate::adopt_renamed_file(dir, "p6-host.json", "group-host.json");
+        let file = dir.join("group-host.json");
         if let Ok(text) = std::fs::read_to_string(&file) {
             host.load(&serde_json::from_str(&text).map_err(|e| format!("{}: {e}", file.display()))?)?;
         }
-        Ok(P6 { host: Mutex::new(host), file, domains, fixed: known, delivered: tokio::sync::Notify::new() })
+        Ok(GroupHostService { host: Mutex::new(host), file, domains, fixed: known, delivered: tokio::sync::Notify::new() })
     }
 
     pub fn group_count(&self) -> usize {
@@ -77,7 +78,7 @@ impl P6 {
             std::fs::rename(&tmp, &self.file)
         });
         if let Err(e) = r {
-            log::warn!("could not save the P6 host state: {e}");
+            log::warn!("could not save the group host state: {e}");
         }
     }
 
@@ -100,7 +101,7 @@ impl P6 {
             for did in Self::dids_in(&req) {
                 if !self.fixed.contains(&did) && d.allows(&did) {
                     if let Err(e) = d.resolve(&did).await {
-                        log::warn!("P6: could not resolve {did}: {e}");
+                        log::warn!("group host: could not resolve {did}: {e}");
                     }
                 }
             }
@@ -147,7 +148,7 @@ impl P6 {
         self.host.lock().unwrap().group_document(did)
     }
 
-    // ── the WebSocket push channel (`GET /anp/p6/ws`) ───────────────────────────────────────────────────
+    // ── the WebSocket push channel (`GET /anp/groups/ws`) ───────────────────────────────────────────────────
 
     /// A wake-up for the next delivery. Call `.enable()` on it (pinned) *before* reading the mailbox, so a delivery in between is not missed.
     pub fn delivery_wake(&self) -> tokio::sync::futures::Notified<'_> {

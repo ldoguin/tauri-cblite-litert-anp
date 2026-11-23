@@ -68,10 +68,10 @@ struct Args {
     handles: Vec<String>,
     /// ANP-06: `NAME` (the built-in a2a-json-rpc) or `NAME=FILE` (the protocol text is the file); each one is a protocol this node can agree to.
     meta_protocols: Vec<String>,
-    /// ANP P6: be a group host (needs `--did-host`; group DIDs are made on that domain).
-    p6_host: bool,
-    /// Run the P6 host without `--require-auth`: anyone who can reach it can collect any device's notifications.
-    p6_open_mailboxes: bool,
+    /// Be a group host for end-to-end encrypted groups (ANP-09 "P6"; needs `--did-host`, group DIDs are made on that domain).
+    group_host: bool,
+    /// Run the group host without `--require-auth`: anyone who can reach it can collect any device's notifications.
+    group_open_mailboxes: bool,
     /// DIDs this node trusts (DID mode), repeatable.
     trust_dids: Vec<String>,
     /// Create this node's key, print `<id> <did>` and exit (needs `--did-host`).
@@ -86,10 +86,10 @@ struct Args {
     public_origin: Option<String>,
     /// DID documents of the callers to accept, repeatable.
     allow_callers: Vec<PathBuf>,
-    /// ANP-09 P5 messaging for peers on other ANP stacks (needs `--e2ee`).
-    p5: bool,
+    /// Encrypted direct messaging with agents on other ANP stacks (ANP-09 "P5"; needs `--e2ee`).
+    direct_messaging: bool,
     /// `DID=URL`: where to send a peer's replies, repeatable.
-    p5_peers: Vec<String>,
+    direct_peers: Vec<String>,
     /// Trust the DIDs of these domains (`host` or `host:port`): their documents are fetched over HTTPS, repeatable.
     trust_domains: Vec<String>,
     /// PEM file of extra root certificates (a private CA) for fetching those documents.
@@ -127,8 +127,8 @@ fn parse_args() -> Result<Args, String> {
         did_host: None,
         handles: vec![],
         meta_protocols: vec![],
-        p6_host: false,
-        p6_open_mailboxes: false,
+        group_host: false,
+        group_open_mailboxes: false,
         trust_dids: vec![],
         print_did: false,
         e2ee: false,
@@ -136,8 +136,8 @@ fn parse_args() -> Result<Args, String> {
         allow_legacy_auth: false,
         public_origin: None,
         allow_callers: vec![],
-        p5: false,
-        p5_peers: vec![],
+        direct_messaging: false,
+        direct_peers: vec![],
         trust_domains: vec![],
         resolver_roots: None,
         resolver_allow_private: false,
@@ -193,8 +193,8 @@ fn parse_args() -> Result<Args, String> {
             "--db-key-env" => a.db_key_env = Some(v()?),
             "--handle" => a.handles.push(v()?),
         "--meta-protocol" => a.meta_protocols.push(v()?),
-        "--p6-host" => a.p6_host = true,
-        "--p6-open-mailboxes" => a.p6_open_mailboxes = true,
+        "--group-host" | "--p6-host" => a.group_host = true,
+        "--group-open-mailboxes" | "--p6-open-mailboxes" => a.group_open_mailboxes = true,
         "--did-host" => {
                 a.did_host = Some(v()?);
                 a.secure = true;
@@ -208,14 +208,14 @@ fn parse_args() -> Result<Args, String> {
             "--trust-domain" => a.trust_domains.push(v()?),
             "--resolver-roots" => a.resolver_roots = Some(PathBuf::from(v()?)),
             "--resolver-allow-private" => a.resolver_allow_private = true,
-            "--p5" => a.p5 = true,
-            "--p5-peer" => a.p5_peers.push(v()?),
+            "--direct-messaging" | "--p5" => a.direct_messaging = true,
+            "--direct-peer" | "--p5-peer" => a.direct_peers.push(v()?),
             "--e2ee" => {
                 a.e2ee = true;
                 a.secure = true;
             }
             "-h" | "--help" => {
-                return Err("usage: anp-node [--name N] [--id ID] [--data DIR] [--http-port P] [--p2p-port P] [--connect ws://host:port/a2a]...\n       LLM agent (build with --features litert, Linux/macOS): [--model FILE.litertlm] [--role R] [--persona TEXT] [--max-tokens N]\n       Security: [--secure] [--trust trust.json] [--trust-peer name=PUBKEY]... [--print-pubkey]\n       Biscuit:  [--root-key ROOT_PUBKEY --token FILE [--revoked FILE]]  (tokens come from anp-admin)\n       Built-in agent: [--agent echo|reviewer|claims|writer]\n       DID (ANP): [--did-host HOST[:PORT] [--trust-did DID]... [--print-did] [--e2ee] [--handle LOCAL]... [--meta-protocol NAME[=FILE]]... [--p6-host [--p6-open-mailboxes]]]\n       Domains: [--trust-domain HOST[:PORT]]... [--resolver-roots CA.pem] [--resolver-allow-private]  (DIDs of a trusted domain are fetched over HTTPS)\n       P5 (ANP-09): [--p5 [--p5-peer DID=URL]...]  (needs --e2ee; peers are the --allow-caller documents)\n       ANP-02: [--require-auth [--public-origin https://HOST[:PORT]] [--allow-caller DID_DOC.json]... [--allow-legacy-auth]]\n       Transport/at rest: [--tls] [--pin-cert PEM] [--admit] [--db-key-env VAR]".into())
+                return Err("usage: anp-node [--name N] [--id ID] [--data DIR] [--http-port P] [--p2p-port P] [--connect ws://host:port/a2a]...\n       LLM agent (build with --features litert, Linux/macOS): [--model FILE.litertlm] [--role R] [--persona TEXT] [--max-tokens N]\n       Security: [--secure] [--trust trust.json] [--trust-peer name=PUBKEY]... [--print-pubkey]\n       Biscuit:  [--root-key ROOT_PUBKEY --token FILE [--revoked FILE]]  (tokens come from anp-admin)\n       Built-in agent: [--agent echo|reviewer|claims|writer]\n       DID (ANP): [--did-host HOST[:PORT] [--trust-did DID]... [--print-did] [--e2ee] [--handle LOCAL]... [--meta-protocol NAME[=FILE]]... [--group-host [--group-open-mailboxes]]]\n       Domains: [--trust-domain HOST[:PORT]]... [--resolver-roots CA.pem] [--resolver-allow-private]  (DIDs of a trusted domain are fetched over HTTPS)\n       Direct messages (ANP-09 P5): [--direct-messaging [--direct-peer DID=URL]...]  (needs --e2ee; peers are the --allow-caller documents)\n       ANP-02: [--require-auth [--public-origin https://HOST[:PORT]] [--allow-caller DID_DOC.json]... [--allow-legacy-auth]]\n       Transport/at rest: [--tls] [--pin-cert PEM] [--admit] [--db-key-env VAR]".into())
             }
             other => return Err(format!("unknown argument {other}")),
         }
@@ -316,9 +316,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     None => (hp, None),
                 };
                 let mut extra = vec![];
-                if args.p5 {
+                if args.direct_messaging {
                     let origin = format!("https://{host}{}", port.map(|p| format!(":{p}")).unwrap_or_default());
-                    extra.push(serde_json::json!({ "id": "#message", "type": "ANPMessageService", "serviceEndpoint": format!("{origin}/anp/p5") }));
+                    extra.push(serde_json::json!({ "id": "#message", "type": "ANPMessageService", "serviceEndpoint": format!("{origin}/anp/direct") }));
                 }
                 // WNS handles this node provides: the DID document names the provider for each (the reverse half of the binding)
                 for (i, local) in args.handles.iter().enumerate() {
@@ -505,21 +505,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         hub.set_http_auth(auth);
     }
-    if args.p6_host {
-        let hostp = args.did_host.as_deref().ok_or("--p6-host needs --did-host")?;
-        if !args.require_auth && !args.p6_open_mailboxes {
-            return Err("--p6-host needs --require-auth (a mailbox is handed to whoever asks), or --p6-open-mailboxes if that is really what you want".into());
+    if args.group_host {
+        let hostp = args.did_host.as_deref().ok_or("--group-host needs --did-host")?;
+        if !args.require_auth && !args.group_open_mailboxes {
+            return Err("--group-host needs --require-auth (a mailbox is handed to whoever asks), or --group-open-mailboxes if that is really what you want".into());
         }
-        hub.set_p6(anp_cblite::p6::P6::new(hostp, &args.data, peer_docs.clone(), domain_trust.clone())?, args.require_auth);
+        hub.set_group_host(anp_cblite::group_host::GroupHostService::new(hostp, &args.data, peer_docs.clone(), domain_trust.clone())?, args.require_auth);
     }
-    if args.p5 {
-        let t = trust.clone().ok_or("--p5 needs DID mode and --e2ee")?;
+    if args.direct_messaging {
+        let t = trust.clone().ok_or("--direct-messaging needs DID mode and --e2ee")?;
         let mut endpoints = std::collections::HashMap::new();
-        for e in &args.p5_peers {
-            let (did, url) = e.split_once('=').ok_or_else(|| format!("--p5-peer wants DID=URL, got {e}"))?;
+        for e in &args.direct_peers {
+            let (did, url) = e.split_once('=').ok_or_else(|| format!("--direct-peer wants DID=URL, got {e}"))?;
             endpoints.insert(did.to_string(), url.to_string());
         }
-        hub.set_p5(anp_cblite::p5::P5::new(t, &args.data, peer_docs.clone(), endpoints, domain_trust.clone())?);
+        hub.set_direct_messaging(anp_cblite::direct_messaging::DirectMessaging::new(t, &args.data, peer_docs.clone(), endpoints, domain_trust.clone())?);
     }
     hub.set_posture(serde_json::json!({
         "tls": args.tls,
@@ -529,7 +529,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "e2ee": args.e2ee,
         "callerAuth": args.require_auth,
         "legacyAuth": args.require_auth && args.allow_legacy_auth,
-        "p5": args.p5,
+        "directMessaging": args.direct_messaging,
+        "groupHost": args.group_host,
         "trustedDomains": args.trust_domains,
     }));
 

@@ -54,7 +54,7 @@ $o2 = (& "$Target\debug\anp-ad.exe" verify-did --did-doc "$Out\sdk.did.json" 2>&
 Step "this project verifies a DID document the SDK created" ($o2 -match "^OK")
 
 Write-Host "P5 v2 objects (bundle, associated data, plaintext) checked by the SDK"
-$o = Py "sdk_check_p5.py"; $o | ForEach-Object { Write-Host "  $_" }
+$o = Py "sdk_check_direct.py"; $o | ForEach-Object { Write-Host "  $_" }
 Step "all P5 checks" (-not (($o -join "`n") -cmatch "FAIL"))
 
 Write-Host "ANP-02 request signatures, both directions"
@@ -210,7 +210,7 @@ if ($sdkg -match "yes") {
 } else { Write-Host "The P6 MLS interop is skipped (scripts/interop/rust-sdk-group-build.sh builds the SDK side in WSL)" }
 
 Write-Host "P6 group host on the node: three devices of this project over signed HTTP, then the SDK as a member and as a controller through it"
-$o = (powershell -NoProfile -File "$root\scripts\e2e-p6-host.ps1" 2>&1 | Out-String)
+$o = (powershell -NoProfile -File "$root\scripts\e2e-group-host.ps1" 2>&1 | Out-String)
 $o -split "`n" | Where-Object { $_ -match "^\s*(sdk :|PASS|FAIL)|panicked|unexpected|called `Result|node log|error" } | ForEach-Object { Write-Host "    $($_.TrimEnd())" }
 Step "the node hosts P6 groups: this project's devices over signed HTTP (mailboxes are the devices' own), receipts by the group DID's key" ($o -match "PASS  devices create")
 Step "the SDK is a member of a hosted group (welcome, a commit made here, its message with its own origin proof) and the controller of another" ($o -match "PASS  the SDK is the third device")
@@ -264,11 +264,11 @@ if (-not $SkipRust) {
   $b = wsl -d Ubuntu -- bash "$wslScripts/rust-sdk-build.sh" 2>&1
   Step "the Rust SDK driver builds (isolated folder in WSL)" (($b -join "`n") -match "anp-rust-interop")
   Push-Location $root
-  cargo build -q -p anp-e2ee --example p5_chat --example p5_wire 2>&1 | Out-Null
+  cargo build -q -p anp-e2ee --example direct_chat --example direct_wire 2>&1 | Out-Null
   $env:ANP_FIXTURE_OUT = "$Out\mine.p5.json"; cargo test -q -p anp-e2ee dump_interop_fixture 2>&1 | Out-Null; Remove-Item Env:\ANP_FIXTURE_OUT
   Pop-Location
   $fx = "$Out\mine.p5.json"; $wfx = "$wslOut/mine.p5.json"
-  $chatExe = "$Target\debug\examples\p5_chat.exe"; $wireExe = "$Target\debug\examples\p5_wire.exe"
+  $chatExe = "$Target\debug\examples\direct_chat.exe"; $wireExe = "$Target\debug\examples\direct_wire.exe"
   $script:bad = $false
   function Mine([string[]]$a) { $o = (& $chatExe @a 2>&1 | Out-String); $o.TrimEnd() -split "`n" | ForEach-Object { Write-Host "    mine: $_" }; if ($LASTEXITCODE -ne 0 -or $o -cmatch "FAIL") { $script:bad = $true } }
   function Sdk([string]$cmd) { $pre = if ($env:P5_OPK) { "P5_OPK=1 " } else { "" }; $o = (wsl -d Ubuntu -- bash -c "cd ~/anp-interop/rust-sdk && $pre./target/debug/anp-rust-interop $cmd" 2>&1 | Out-String); $o.TrimEnd() -split "`n" | ForEach-Object { Write-Host "    sdk : $_" }; if ($o -cmatch "FAIL|panicked") { $script:bad = $true } }
@@ -314,7 +314,7 @@ if (-not $SkipRust) {
   [IO.File]::WriteAllText("$Out\alice.did.json", ($fxj.sender.did_document | ConvertTo-Json -Depth 20), (New-Object System.Text.UTF8Encoding($false)))
   $route = (wsl -d Ubuntu -- ip route show default) -join " "; $null = $route -match "via (\d+\.\d+\.\d+\.\d+)"; $hostip = $Matches[1]
   $W3 = "$Out\p5node"; Remove-Item $W3 -Recurse -Force -ErrorAction SilentlyContinue
-  $nodeArgs = @("--name", "live", "--data", $W3, "--http-port", "18798", "--did-host", "live.example.com", "--e2ee", "--p5", "--p5-peer", "$($fxj.sender.did)=http://127.0.0.1:18799/inbox", "--allow-caller", "$Out\alice.did.json")
+  $nodeArgs = @("--name", "live", "--data", $W3, "--http-port", "18798", "--did-host", "live.example.com", "--e2ee", "--direct-messaging", "--direct-peer", "$($fxj.sender.did)=http://127.0.0.1:18799/inbox", "--allow-caller", "$Out\alice.did.json")
   $p = Start-Process $node -ArgumentList $nodeArgs -NoNewWindow -PassThru -RedirectStandardOutput "$Out\p5node.out" -RedirectStandardError "$Out\p5node.err"
   Start-Sleep 8
   $script:bad = $false
@@ -328,9 +328,9 @@ if (-not $SkipRust) {
   Step "after a restart the node still has the session (it is kept on disk)" (-not $script:bad)
   Kill $p
 
-  Write-Host "  the SDK's client chats with a node that resolves its DID over HTTPS (no --allow-caller, no --p5-peer)"
+  Write-Host "  the SDK's client chats with a node that resolves its DID over HTTPS (no --allow-caller, no --direct-peer)"
   $W5 = "$Out\p5resolve"; Remove-Item $W5 -Recurse -Force -ErrorAction SilentlyContinue
-  $p = Start-Process $node -ArgumentList (@("--name", "live", "--data", $W5, "--http-port", "18798", "--did-host", "live.example.com", "--e2ee", "--p5") + $trust) -NoNewWindow -PassThru -RedirectStandardOutput "$Out\p5resolve.out" -RedirectStandardError "$Out\p5resolve.err"
+  $p = Start-Process $node -ArgumentList (@("--name", "live", "--data", $W5, "--http-port", "18798", "--did-host", "live.example.com", "--e2ee", "--direct-messaging") + $trust) -NoNewWindow -PassThru -RedirectStandardOutput "$Out\p5resolve.out" -RedirectStandardError "$Out\p5resolve.err"
   Start-Sleep 8
   $script:bad = $false
   Sdk "live $wslOut/mine.p5.domain.json http://${hostip}:18798 18799 live $wslOut/rlive.state"
@@ -340,7 +340,7 @@ if (-not $SkipRust) {
   Write-Host "  the node's replies while the network is down: queued, retried, delivered (the SDK's client sits behind a proxy that fails twice)"
   $W6 = "$Out\p5outbox"; Remove-Item $W6 -Recurse -Force -ErrorAction SilentlyContinue
   $px = Start-Process wsl -ArgumentList @("-d", "Ubuntu", "--", "python3", "-I", "$wslScripts/flaky_proxy.py", "18799", "18801", "2") -NoNewWindow -PassThru -RedirectStandardOutput "$Out\proxy.out" -RedirectStandardError "$Out\proxy.err"
-  $nodeArgs6 = @("--name", "live", "--data", $W6, "--http-port", "18798", "--did-host", "live.example.com", "--e2ee", "--p5", "--p5-peer", "$($fxj.sender.did)=http://127.0.0.1:18799/inbox", "--allow-caller", "$Out\alice.did.json")
+  $nodeArgs6 = @("--name", "live", "--data", $W6, "--http-port", "18798", "--did-host", "live.example.com", "--e2ee", "--direct-messaging", "--direct-peer", "$($fxj.sender.did)=http://127.0.0.1:18799/inbox", "--allow-caller", "$Out\alice.did.json")
   $env:RUST_LOG = "info"
   $p = Start-Process $node -ArgumentList $nodeArgs6 -NoNewWindow -PassThru -RedirectStandardOutput "$Out\p5outbox.out" -RedirectStandardError "$Out\p5outbox.err"
   Start-Sleep 8
@@ -370,7 +370,7 @@ if (Test-Path $GoDriver) {
   if (Test-Path "$Out\chat-a\t1.json") {
     $okw = Go @("wire", "$Out\mine.wire.json", "$Out\chat-a\t1.json", "$Out\chat-a\t3.json", "$Out\mine.p5.json", "$Out\gosdk.wire.json")
     Step "the Go SDK parses every wire object this project builds" $okw
-    $o3 = (& "$Target\debug\examples\p5_wire.exe" check "$Out\gosdk.wire.json" 2>&1 | Out-String); $o3.TrimEnd() -split "`n" | ForEach-Object { Write-Host "    mine: $_" }
+    $o3 = (& "$Target\debug\examples\direct_wire.exe" check "$Out\gosdk.wire.json" 2>&1 | Out-String); $o3.TrimEnd() -split "`n" | ForEach-Object { Write-Host "    mine: $_" }
     Step "this project parses every wire object the Go SDK builds" ((($o3 -split "`n" | Where-Object { $_ -match "^PASS" }).Count -eq 7) -and -not ($o3 -cmatch "FAIL"))
   }
   # P6 (group E2EE) wire objects: the Go SDK's parsers and builders

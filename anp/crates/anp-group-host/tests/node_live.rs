@@ -148,13 +148,13 @@ impl Net {
 
     fn rpc(&self, method: &str, meta: &Value, body: &Value, auth: Option<&Value>, signer: Option<&Dev>) -> Value {
         let req = wire::request(method, meta, body, auth).unwrap_or_else(|e| panic!("{method}: invalid request: {e}"));
-        let (status, v) = self.post("/anp/p6", &json!({ "jsonrpc": "2.0", "id": 1, "method": req["method"], "params": req["params"] }), signer);
+        let (status, v) = self.post("/anp/groups", &json!({ "jsonrpc": "2.0", "id": 1, "method": req["method"], "params": req["params"] }), signer);
         assert_eq!(status, 200, "{method}: HTTP {status}: {v}");
         v
     }
 
     fn pull(&self, d: &Dev, ack: &[String]) -> (u16, Value) {
-        self.post("/anp/p6", &json!({ "jsonrpc": "2.0", "id": 9, "method": "group.e2ee.pull", "params": { "meta": { "sender_did": d.did, "sender_device_id": d.device_id }, "ack": ack } }), Some(d))
+        self.post("/anp/groups", &json!({ "jsonrpc": "2.0", "id": 9, "method": "group.e2ee.pull", "params": { "meta": { "sender_did": d.did, "sender_device_id": d.device_id }, "ack": ack } }), Some(d))
     }
 
     fn notes(&self, d: &Dev, ack: &[String]) -> Vec<(String, Value)> {
@@ -187,7 +187,7 @@ fn live_a_group_over_http() {
     let (mut alice, mut bob, mut carol) = devices();
 
     // the host makes a group DID, and serves its document
-    let (status, v) = net.post("/anp/p6/provision", &json!({ "name": format!("blue{}", std::process::id() % 1000) }), Some(&alice));
+    let (status, v) = net.post("/anp/groups/provision", &json!({ "name": format!("blue{}", std::process::id() % 1000) }), Some(&alice));
     assert_eq!(status, 200, "{v}");
     let group_did = s(&v["group_did"]);
     let path = format!("/{}/did.json", group_did.split(':').skip(3).collect::<Vec<_>>().join("/"));
@@ -288,12 +288,12 @@ fn live_a_group_over_http() {
 
     // a mailbox is the device's own (with signed requests): alice cannot collect bob's
     if sign {
-        let (status, _) = net.post("/anp/p6", &json!({ "jsonrpc": "2.0", "id": 9, "method": "group.e2ee.pull", "params": { "meta": { "sender_did": bob.did, "sender_device_id": bob.device_id } } }), Some(&alice));
+        let (status, _) = net.post("/anp/groups", &json!({ "jsonrpc": "2.0", "id": 9, "method": "group.e2ee.pull", "params": { "meta": { "sender_did": bob.did, "sender_device_id": bob.device_id } } }), Some(&alice));
         assert_eq!(status, 200);
-        let (_, v) = net.post("/anp/p6", &json!({ "jsonrpc": "2.0", "id": 9, "method": "group.e2ee.pull", "params": { "meta": { "sender_did": bob.did, "sender_device_id": bob.device_id } } }), Some(&alice));
+        let (_, v) = net.post("/anp/groups", &json!({ "jsonrpc": "2.0", "id": 9, "method": "group.e2ee.pull", "params": { "meta": { "sender_did": bob.did, "sender_device_id": bob.device_id } } }), Some(&alice));
         assert_eq!(code(&v), -32001, "{v}");
         let unsigned = Net { url: net.url.clone(), sign: false };
-        let (status, _) = unsigned.post("/anp/p6", &json!({ "jsonrpc": "2.0", "id": 9, "method": "group.e2ee.pull", "params": { "meta": { "sender_did": bob.did, "sender_device_id": bob.device_id } } }), None);
+        let (status, _) = unsigned.post("/anp/groups", &json!({ "jsonrpc": "2.0", "id": 9, "method": "group.e2ee.pull", "params": { "meta": { "sender_did": bob.did, "sender_device_id": bob.device_id } } }), None);
         assert_eq!(status, 401, "an unsigned request to a node that requires signatures");
     }
 
@@ -345,12 +345,12 @@ fn live_sdk_as_third_device() {
     let sdk_dev = "dev-sdk".to_string();
     let docs = "{W}/alice.did.json {W}/bob.did.json {W}/sdk.did.json";
     let sdk_mailbox = |ack: &[String]| -> Vec<(String, Value)> {
-        let (status, v) = net.post("/anp/p6", &json!({ "jsonrpc": "2.0", "id": 9, "method": "group.e2ee.pull", "params": { "meta": { "sender_did": sdk_did, "sender_device_id": sdk_dev }, "ack": ack } }), None);
+        let (status, v) = net.post("/anp/groups", &json!({ "jsonrpc": "2.0", "id": 9, "method": "group.e2ee.pull", "params": { "meta": { "sender_did": sdk_did, "sender_device_id": sdk_dev }, "ack": ack } }), None);
         assert_eq!(status, 200, "{v}");
         ok(&v)["notifications"].as_array().unwrap().iter().map(|n| (n["id"].as_str().unwrap().to_string(), n["notification"].clone())).collect()
     };
 
-    let (status, v) = net.post("/anp/p6/provision", &json!({ "name": format!("mixed{}", std::process::id() % 1000) }), None);
+    let (status, v) = net.post("/anp/groups/provision", &json!({ "name": format!("mixed{}", std::process::id() % 1000) }), None);
     assert_eq!(status, 200, "{v}");
     let group_did = s(&v["group_did"]);
     write_json(&dir, "group.json", &json!({ "group_did": group_did }));
@@ -482,11 +482,11 @@ fn live_sdk_as_third_device() {
 
     // 4c. two SDK devices of one DID (own signing and key-agreement keys in the one document) in a group controlled by alice
     let mail_of = |dev: &str, ack: &[String]| -> Vec<(String, Value)> {
-        let (status, v) = net.post("/anp/p6", &json!({ "jsonrpc": "2.0", "id": 9, "method": "group.e2ee.pull", "params": { "meta": { "sender_did": sdk_did, "sender_device_id": dev }, "ack": ack } }), None);
+        let (status, v) = net.post("/anp/groups", &json!({ "jsonrpc": "2.0", "id": 9, "method": "group.e2ee.pull", "params": { "meta": { "sender_did": sdk_did, "sender_device_id": dev }, "ack": ack } }), None);
         assert_eq!(status, 200, "{v}");
         ok(&v)["notifications"].as_array().unwrap().iter().map(|n| (n["id"].as_str().unwrap().to_string(), n["notification"].clone())).collect()
     };
-    let (status, v) = net.post("/anp/p6/provision", &json!({ "name": format!("pair{}", std::process::id() % 1000) }), None);
+    let (status, v) = net.post("/anp/groups/provision", &json!({ "name": format!("pair{}", std::process::id() % 1000) }), None);
     assert_eq!(status, 200, "{v}");
     let group3 = s(&v["group_did"]);
     sdk("kpmore {W} sdk kp-sdk-g3", 0);
@@ -557,7 +557,7 @@ fn live_sdk_as_third_device() {
     // 5. the other direction: a second SDK device creates and controls a group (create, add, send, all signed by the SDK) and adds this project
     let sdk2_doc = read_json(&dir, "sdk2.did.json");
     let sdk2_did = s(&sdk2_doc["id"]);
-    let (status, v) = net.post("/anp/p6/provision", &json!({ "name": format!("sdkled{}", std::process::id() % 1000) }), None);
+    let (status, v) = net.post("/anp/groups/provision", &json!({ "name": format!("sdkled{}", std::process::id() % 1000) }), None);
     assert_eq!(status, 200, "{v}");
     let group2 = s(&v["group_did"]);
     write_json(&dir, "group.json", &json!({ "group_did": group2 }));
@@ -602,7 +602,7 @@ fn live_two_devices_of_one_did() {
     let net = Net { url: std::env::var("ANP_P6_URL").unwrap(), sign: std::env::var("ANP_P6_SIGN").is_ok() };
     let (_, mut bob, mut carol) = devices();
     let (mut alice, mut alice2) = dana_pair();
-    let (status, v) = net.post("/anp/p6/provision", &json!({ "name": format!("multi{}", std::process::id() % 1000) }), Some(&alice));
+    let (status, v) = net.post("/anp/groups/provision", &json!({ "name": format!("multi{}", std::process::id() % 1000) }), Some(&alice));
     assert_eq!(status, 200, "{v}");
     let group_did = s(&v["group_did"]);
     for (d, id) in [(&mut bob, "kp-bob-m"), (&mut alice2, "kp-alice2-m"), (&mut carol, "kp-carol-m")] {
@@ -697,7 +697,7 @@ fn live_a_held_pull_returns_on_delivery() {
     let sign = std::env::var("ANP_P6_SIGN").is_ok();
     let net = Net { url: url.clone(), sign };
     let (mut alice, mut bob, _) = devices();
-    let (status, v) = net.post("/anp/p6/provision", &json!({ "name": format!("held{}", std::process::id() % 1000) }), Some(&alice));
+    let (status, v) = net.post("/anp/groups/provision", &json!({ "name": format!("held{}", std::process::id() % 1000) }), Some(&alice));
     assert_eq!(status, 200, "{v}");
     let group_did = s(&v["group_did"]);
     let kpb = bob.key_package("kp-bob-held");
@@ -718,7 +718,7 @@ fn live_a_held_pull_returns_on_delivery() {
             let started = std::time::Instant::now();
             let body = json!({ "jsonrpc": "2.0", "id": 9, "method": "group.e2ee.pull", "params": { "meta": { "sender_did": did, "sender_device_id": dev }, "wait_ms": 20000 } });
             let text = body.to_string();
-            let full = format!("{url}/anp/p6");
+            let full = format!("{url}/anp/groups");
             let mut req = ureq::post(&full).set("content-type", "application/json");
             if sign {
                 let created = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
@@ -750,9 +750,9 @@ use tungstenite::{stream::MaybeTlsStream, Message};
 
 type Sock = tungstenite::WebSocket<MaybeTlsStream<std::net::TcpStream>>;
 
-/// Open `GET /anp/p6/ws` for `d`'s mailbox, signed (ANP-02) by `signer` when the node requires it. Reads time out after a second.
+/// Open `GET /anp/groups/ws` for `d`'s mailbox, signed (ANP-02) by `signer` when the node requires it. Reads time out after a second.
 fn ws_open(net: &Net, d: &Dev, signer: Option<&Dev>) -> Result<Sock, tungstenite::Error> {
-    let http = format!("{}/anp/p6/ws?did={}&device={}", net.url, d.did, d.device_id);
+    let http = format!("{}/anp/groups/ws?did={}&device={}", net.url, d.did, d.device_id);
     let mut req = tungstenite::client::IntoClientRequest::into_client_request(http.replacen("http://", "ws://", 1)).unwrap();
     if let (true, Some(sg)) = (net.sign, signer) {
         let created = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
@@ -793,7 +793,7 @@ fn live_push_channel_hashes_and_policy() {
     let entry = |d: &Dev| (d.did.clone(), d.device_id.clone(), d.mls.leaf_signature_key_b64u());
 
     // a group with a policy of at most two members
-    let (status, v) = net.post("/anp/p6/provision", &json!({ "name": format!("push{}", std::process::id() % 1000), "max_members": 2 }), Some(&alice));
+    let (status, v) = net.post("/anp/groups/provision", &json!({ "name": format!("push{}", std::process::id() % 1000), "max_members": 2 }), Some(&alice));
     assert_eq!(status, 200, "{v}");
     let group_did = s(&v["group_did"]);
     assert_eq!(v["policy_hash"], state::policy_hash(Some(2)).as_str(), "the host says which policy it holds");
@@ -885,7 +885,7 @@ fn live_push_channel_hashes_and_policy() {
     alice.mls.abort_commit(&gid).unwrap();
 
     // the group's state, signed by the group: a member gets it, the roster hash matches what a client computes, and only the device's own DID may ask
-    let ask = |who: &Dev, signer: &Dev| net.post("/anp/p6", &json!({ "jsonrpc": "2.0", "id": 4, "method": "group.e2ee.state", "params": { "meta": { "sender_did": who.did, "sender_device_id": who.device_id }, "group_did": group_did } }), Some(signer)).1;
+    let ask = |who: &Dev, signer: &Dev| net.post("/anp/groups", &json!({ "jsonrpc": "2.0", "id": 4, "method": "group.e2ee.state", "params": { "meta": { "sender_did": who.did, "sender_device_id": who.device_id }, "group_did": group_did } }), Some(signer)).1;
     let st = ok(&ask(&bob, &bob)).clone();
     anp_did::verify_proof(&st, &receipt_key).expect("the state is signed by the group's key");
     assert_eq!(st["roster_hash"], state::roster_hash(&[entry(&alice), entry(&bob)]).as_str());

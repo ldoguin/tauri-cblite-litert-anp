@@ -20,10 +20,10 @@ pub use a2a_core::llm;
 pub mod httpauth;
 pub mod hub;
 pub mod meta;
-pub mod p6;
+pub mod group_host;
 #[cfg(feature = "enterprise")]
 pub mod p2p;
-pub mod p5;
+pub mod direct_messaging;
 pub mod rules;
 pub mod server;
 pub mod trust;
@@ -47,5 +47,17 @@ pub fn default_card(name: &str, description: &str, base_url: &str) -> AgentCard 
         skills: vec![],
         default_input_modes: vec!["text/plain".into()],
         default_output_modes: vec!["text/plain".into()],
+    }
+}
+
+/// A state file that was renamed: if `<dir>/<old>` is there and `<dir>/<new>` is not, the old one is renamed to the new name, so a node that
+/// ran before the rename keeps its state. (The P5 and P6 files became `direct-*.json` and `group-host.json`.)
+pub(crate) fn adopt_renamed_file(dir: &std::path::Path, old: &str, new: &str) {
+    let (o, n) = (dir.join(old), dir.join(new));
+    if o.exists() && !n.exists() {
+        match std::fs::rename(&o, &n) {
+            Ok(()) => log::info!("{} is now {}", o.display(), n.display()),
+            Err(e) => log::warn!("could not rename {} to {}: {e}", o.display(), n.display()),
+        }
     }
 }

@@ -3,7 +3,7 @@
 //!
 //!   anp-rust-interop open <fixture.json>              open the message this project sealed (needs the fixture's keys)
 //!   anp-rust-interop seal <fixture.json> <out.json>   seal a message to this project's prekey bundle
-//!   anp-rust-interop chat-init|chat-accept|chat-recv ...   one leg of a conversation (see p5_chat in anp-e2ee's examples)
+//!   anp-rust-interop chat-init|chat-accept|chat-recv ...   one leg of a conversation (see direct_chat in anp-e2ee's examples)
 //!   anp-rust-interop live <fixture> <node_url> <listen_port> <node_name> [state_out]   chat with a running node, then try to break it
 //!   anp-rust-interop live-resume <fixture> <node_url> <listen_port> <state_file>       carry the session on after the node restarted
 //!
@@ -176,7 +176,7 @@ fn main() {
             let node_name = args[5].clone();
             let get = |url: &str| -> Value { serde_json::from_str(&ureq::get(url).call().expect("GET").into_string().unwrap()).unwrap() };
             let post = |body: &Value| -> Value {
-                match ureq::post(&format!("{base}/anp/p5")).set("content-type", "application/json").send_string(&body.to_string()) {
+                match ureq::post(&format!("{base}/anp/direct")).set("content-type", "application/json").send_string(&body.to_string()) {
                     Ok(r) => serde_json::from_str(&r.into_string().unwrap()).unwrap(),
                     Err(ureq::Error::Status(_, r)) => serde_json::from_str(&r.into_string().unwrap_or_default()).unwrap_or(Value::Null),
                     Err(e) => panic!("POST: {e}"),
@@ -322,7 +322,7 @@ fn main() {
             let (_p, body) = V2DirectE2eeSession::encrypt_follow_up(&mut state, &local, &md, &pt).expect("a follow-up");
             let req = direct_send_request_v2(md, V2DirectBody::Cipher(body)).unwrap();
             let rpc = json!({ "jsonrpc": "2.0", "id": "r1", "method": req["method"], "params": req["params"] });
-            let resp = match ureq::post(&format!("{base}/anp/p5")).send_string(&rpc.to_string()) {
+            let resp = match ureq::post(&format!("{base}/anp/direct")).send_string(&rpc.to_string()) {
                 Ok(r) => serde_json::from_str::<Value>(&r.into_string().unwrap()).unwrap(),
                 Err(e) => panic!("POST: {e}"),
             };
@@ -414,7 +414,7 @@ fn chrono_now(v: &Value) -> chrono::DateTime<chrono::Utc> {
     s(v).parse().expect("RFC 3339 timestamp")
 }
 
-/// `P5_OPK=1`: the conversation starts with a one-time prekey (a fixed test key, the same as in the project's `p5_chat`).
+/// `P5_OPK=1`: the conversation starts with a one-time prekey (a fixed test key, the same as in the project's `direct_chat`).
 fn opk() -> Option<(V2OneTimePrekey, StaticSecret)> {
     std::env::var("P5_OPK").ok()?;
     let secret = StaticSecret::from([88u8; 32]);

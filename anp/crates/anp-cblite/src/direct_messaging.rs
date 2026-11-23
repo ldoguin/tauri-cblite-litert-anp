@@ -1,4 +1,4 @@
-//! ANP-09 P5 messaging for the node: the endpoint another ANP stack talks to (`POST /anp/p5`).
+//! ANP-09 P5 messaging for the node: the endpoint another ANP stack talks to (`POST /anp/direct`).
 //!
 //! It answers the key-service call `direct.e2ee.get_prekey_bundle` (our signed prekey bundle, and one one-time prekey
 //! when the asker is a known peer) and accepts `direct.send`:
@@ -35,7 +35,7 @@ const AGENT_WAIT: Duration = Duration::from_secs(120);
 #[derive(Clone)]
 struct Peer {
     doc: anp_did::Verified,
-    /// Where to POST replies: from `--p5-peer`, or the document's `ANPMessageService`.
+    /// Where to POST replies: from `--direct-peer`, or the document's `ANPMessageService`.
     endpoint: Option<String>,
 }
 
@@ -111,7 +111,7 @@ impl Published {
     }
 }
 
-pub struct P5 {
+pub struct DirectMessaging {
     trust: Arc<Trust>,
     file: PathBuf,
     outbox: Mutex<Vec<Pending>>,
@@ -144,12 +144,12 @@ fn rpc_error(code: i32, msg: &str) -> Value {
     }
 }
 
-impl P5 {
+impl DirectMessaging {
     /// `docs` are the DID documents of the peers we talk to (each must verify); `endpoints` maps a peer's DID to where
     /// replies go; `dir` is where sessions are kept.
-    pub fn new(trust: Arc<Trust>, dir: &std::path::Path, docs: Vec<Value>, endpoints: HashMap<String, String>, domains: Option<Arc<DomainTrust>>) -> Result<P5, String> {
-        if trust.p5_identity().is_none() {
-            return Err("P5 messaging needs end-to-end encryption (--e2ee) in DID mode".into());
+    pub fn new(trust: Arc<Trust>, dir: &std::path::Path, docs: Vec<Value>, endpoints: HashMap<String, String>, domains: Option<Arc<DomainTrust>>) -> Result<DirectMessaging, String> {
+        if trust.direct_identity().is_none() {
+            return Err("direct messaging needs end-to-end encryption (--e2ee) in DID mode".into());
         }
         let mut peers = HashMap::new();
         for d in docs {
@@ -157,7 +157,10 @@ impl P5 {
             let endpoint = endpoints.get(&v.did_string).cloned().or_else(|| v.service_endpoint("ANPMessageService"));
             peers.insert(v.did_string.clone(), Peer { doc: v, endpoint });
         }
-        let file = dir.join("p5-sessions.json");
+        for (old, new) in [("p5-sessions.json", "direct-sessions.json"), ("p5-outbox.json", "direct-outbox.json"), ("p5-published.json", "direct-published.json")] {
+            crate::adopt_renamed_file(dir, old, new);
+        }
+        let file = dir.join("direct-sessions.json");
         let mut sessions = HashMap::new();
         if let Ok(text) = std::fs::read_to_string(&file) {
             let v: Value = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", file.display()))?;
@@ -173,16 +176,16 @@ impl P5 {
                 Err(_) => Ok(None),
             }
         };
-        let outbox: Vec<Pending> = load("p5-outbox.json")?.map(|v| v.as_array().cloned().unwrap_or_default().iter().filter_map(Pending::from_json).collect()).unwrap_or_default();
-        let published = load("p5-published.json")?.map(|v| Published::from_json(&v)).unwrap_or_default();
-        Ok(P5 {
+        let outbox: Vec<Pending> = load("direct-outbox.json")?.map(|v| v.as_array().cloned().unwrap_or_default().iter().filter_map(Pending::from_json).collect()).unwrap_or_default();
+        let published = load("direct-published.json")?.map(|v| Published::from_json(&v)).unwrap_or_default();
+        Ok(DirectMessaging {
             trust,
             file,
             outbox: Mutex::new(outbox),
-            outbox_file: dir.join("p5-outbox.json"),
+            outbox_file: dir.join("direct-outbox.json"),
             wake: tokio::sync::Notify::new(),
             published: Mutex::new(published),
-            published_file: dir.join("p5-published.json"),
+            published_file: dir.join("direct-published.json"),
             peers,
             dynamic: Mutex::new(HashMap::new()),
             domains,
@@ -246,11 +249,11 @@ impl P5 {
             let Some(i) = o.iter().position(|x| x.id == p.id) else { continue };
             match outcome {
                 Outcome::Delivered => {
-                    log::info!("P5: reply {} delivered (attempt {})", p.id, p.attempts + 1);
+                    log::info!("direct messaging: reply {} delivered (attempt {})", p.id, p.attempts + 1);
                     o.remove(i);
                 }
                 Outcome::Dead(why) => {
-                    log::warn!("P5: reply {} dropped, the peer will not take it: {why}", p.id);
+                    log::warn!("direct messaging: reply {} dropped, the peer will not take it: {why}", p.id);
                     o.remove(i);
                 }
                 Outcome::Retry(why) => {
@@ -258,12 +261,12 @@ impl P5 {
                     e.attempts += 1;
                     e.last_error = why.clone();
                     if e.attempts >= OUTBOX_MAX_ATTEMPTS || unix_now() - e.created > OUTBOX_MAX_AGE {
-                        log::warn!("P5: reply {} dropped after {} attempts: {why}", p.id, e.attempts);
+                        log::warn!("direct messaging: reply {} dropped after {} attempts: {why}", p.id, e.attempts);
                         o.remove(i);
                     } else {
                         let delay = (2i64 << e.attempts.min(8)).min(300);
                         e.next_at = unix_now() + delay;
-                        log::warn!("P5: reply {} not delivered ({why}); next attempt in {delay} s", p.id);
+                        log::warn!("direct messaging: reply {} not delivered ({why}); next attempt in {delay} s", p.id);
                     }
                 }
             }
@@ -274,7 +277,7 @@ impl P5 {
     /// Send one queued reply: signed with ANP-02 afresh each time, to the peer's current endpoint.
     async fn attempt(&self, p: &Pending) -> Outcome {
         let Some(url) = self.peer(&p.peer_did).and_then(|x| x.endpoint) else {
-            return Outcome::Retry("no endpoint for the peer (--p5-peer DID=URL, or an ANPMessageService in its document)".into());
+            return Outcome::Retry("no endpoint for the peer (--direct-peer DID=URL, or an ANPMessageService in its document)".into());
         };
         let (trust, rpc) = (self.trust.clone(), p.rpc.clone());
         let r = tokio::task::spawn_blocking(move || -> Result<(u16, String), String> {
@@ -333,12 +336,12 @@ impl P5 {
             Ok(r) => match r.verified {
                 Some(doc) => {
                     let endpoint = doc.service_endpoint("ANPMessageService");
-                    log::info!("P5: resolved {did} from {} (reply endpoint: {})", r.domain, endpoint.as_deref().unwrap_or("none"));
+                    log::info!("direct messaging: resolved {did} from {} (reply endpoint: {})", r.domain, endpoint.as_deref().unwrap_or("none"));
                     self.dynamic.lock().unwrap().insert(did.to_string(), Peer { doc, endpoint });
                 }
-                None => log::warn!("P5: {did} is not a did:wba e1 DID, so it cannot take part in a P5 session"),
+                None => log::warn!("direct messaging: {did} is not a did:wba e1 DID, so it cannot take part in a direct-messaging (P5) session"),
             },
-            Err(e) => log::warn!("P5: could not resolve {did}: {e}"),
+            Err(e) => log::warn!("direct messaging: could not resolve {did}: {e}"),
         }
     }
 
@@ -358,7 +361,7 @@ impl P5 {
             std::fs::rename(&tmp, &self.file)
         });
         if let Err(e) = r {
-            log::warn!("could not save the P5 sessions: {e}");
+            log::warn!("could not save the direct-messaging sessions: {e}");
         }
     }
 
@@ -385,7 +388,7 @@ impl P5 {
     }
 
     fn me(&self) -> (String, String, String, [u8; 32]) {
-        self.trust.p5_identity().expect("checked in new")
+        self.trust.direct_identity().expect("checked in new")
     }
 
     fn get_bundle(&self, req: &Value) -> Result<Value, Fail> {
@@ -397,7 +400,7 @@ impl P5 {
         let bundle = self.trust.e2ee_bundle().ok_or((4000, "no bundle".to_string()))?;
         // one-time prekeys are scarce: only known peers may take one
         let known = meta["sender_did"].as_str().map_or(false, |d| self.peer(d).is_some());
-        let opk = if known { self.trust.p5_issue_opk() } else { None };
+        let opk = if known { self.trust.direct_issue_one_time_prekey() } else { None };
         if require_opk && opk.is_none() {
             return fail(4003, "no one-time prekey available");
         }
@@ -433,7 +436,7 @@ impl P5 {
                 if body["sender_static_key_agreement_id"].as_str() != Some(peer_ka_id.as_str()) {
                     return fail(4012, "the init's sender key-agreement id is not the one in the sender's DID document");
                 }
-                let (spk_id, spk_secret) = self.trust.p5_prekey_for_bundle(body["recipient_bundle_id"].as_str().unwrap_or("")).ok_or((4007, "unknown or deleted bundle".to_string()))?;
+                let (spk_id, spk_secret) = self.trust.direct_prekey_for_bundle(body["recipient_bundle_id"].as_str().unwrap_or("")).ok_or((4007, "unknown or deleted bundle".to_string()))?;
                 if body["recipient_signed_prekey_id"].as_str() != Some(spk_id.as_str()) {
                     return fail(4007, "the signed prekey is not the bundle's");
                 }
@@ -442,7 +445,7 @@ impl P5 {
                 }
                 let opk_id = body["recipient_one_time_prekey_id"].as_str().map(str::to_string);
                 let opk_secret = match &opk_id {
-                    Some(id) => Some(self.trust.p5_consume_opk(id).ok_or((4003, format!("one-time prekey {id} was not issued or is used up")))?),
+                    Some(id) => Some(self.trust.direct_consume_one_time_prekey(id).ok_or((4003, format!("one-time prekey {id} was not issued or is used up")))?),
                     None => None,
                 };
                 let local = LocalBundle {
@@ -473,21 +476,21 @@ impl P5 {
     async fn deliver(self: Arc<Self>, hub: Arc<Hub>, key: String, in_id: String, plaintext: Value) {
         let text = plaintext["text"].as_str().or_else(|| plaintext["payload"]["text"].as_str()).map(str::to_string);
         let Some(text) = text else {
-            log::warn!("P5 message {in_id}: nothing the agent can read (needs a text)");
+            log::warn!("direct message {in_id}: nothing the agent can read (needs a text)");
             return;
         };
         let req = match serde_json::from_value(json!({ "message": { "messageId": uuid::Uuid::new_v4().to_string(), "role": "ROLE_USER", "parts": [{ "text": text }] } })) {
             Ok(r) => r,
-            Err(e) => return log::warn!("P5: cannot build the A2A message: {e}"),
+            Err(e) => return log::warn!("direct messaging: cannot build the A2A message: {e}"),
         };
         let mut rx = hub.subscribe();
         let (tid, baseline) = match hub.send_message(&req).await {
             Ok(x) => x,
-            Err(e) => return log::warn!("P5: the agent refused the message: {}", e.message),
+            Err(e) => return log::warn!("direct messaging: the agent refused the message: {}", e.message),
         };
         let task = match hub.wait_for(&tid, &mut rx, AGENT_WAIT, |t| settled(t, baseline.as_deref())).await {
             Ok(Some(t)) => t,
-            other => return log::warn!("P5: no answer from the agent: {other:?}"),
+            other => return log::warn!("direct messaging: no answer from the agent: {other:?}"),
         };
         let tv = serde_json::to_value(&task).unwrap_or(Value::Null);
         let reply: String = tv["artifacts"].as_array().into_iter().flatten().flat_map(|a| a["parts"].as_array().into_iter().flatten()).filter_map(|p| p["text"].as_str()).collect::<Vec<_>>().join("");
@@ -497,10 +500,10 @@ impl P5 {
             let mut sessions = self.sessions.lock().unwrap();
             let Some(session) = sessions.get_mut(&key) else { return };
             let Some(peer) = self.peer(&session.binding.peer_did) else { return };
-            let out_id = format!("p5-{}", uuid::Uuid::new_v4());
+            let out_id = format!("direct-{}", uuid::Uuid::new_v4());
             let body = match session.encrypt(&out_id, &json!({ "application_content_type": "text/plain", "text": reply })) {
                 Ok(b) => b,
-                Err(e) => return log::warn!("P5: cannot encrypt the reply: {e}"),
+                Err(e) => return log::warn!("direct messaging: cannot encrypt the reply: {e}"),
             };
             let b = &session.binding;
             let meta = json!({
@@ -511,7 +514,7 @@ impl P5 {
             });
             let request = match wire::direct_send_request(&meta, &body) {
                 Ok(r) => r,
-                Err(e) => return log::warn!("P5: cannot build the reply: {e}"),
+                Err(e) => return log::warn!("direct messaging: cannot build the reply: {e}"),
             };
             let peer_did = peer.doc.did_string.clone();
             self.save(&sessions);
@@ -594,7 +597,7 @@ mod tests {
     use std::io::{Read, Write};
 
     fn dir(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("anp-p5-{}-{name}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("anp-direct-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
@@ -611,23 +614,23 @@ mod tests {
     async fn a_peer_can_publish_its_bundle_and_others_fetch_it_one_prekey_at_a_time() {
         let (dm, dp) = (dir("pub-me"), dir("pub-peer"));
         let (me, peer) = (node("me", 1, &dm), node("peer", 2, &dp));
-        let p5 = P5::new(me.clone(), &dm, vec![peer.did_document().unwrap()], HashMap::new(), None).unwrap();
-        let id = peer.p5_identity().unwrap();
+        let direct = DirectMessaging::new(me.clone(), &dm, vec![peer.did_document().unwrap()], HashMap::new(), None).unwrap();
+        let id = peer.direct_identity().unwrap();
         let bundle = peer.e2ee_bundle().unwrap();
-        let opks = vec![peer.p5_issue_opk().unwrap(), peer.p5_issue_opk().unwrap()];
+        let opks = vec![peer.direct_issue_one_time_prekey().unwrap(), peer.direct_issue_one_time_prekey().unwrap()];
         let req = wire::publish_prekey_bundle_request(&service_meta(&id, "op-pub"), &bundle, &opks).unwrap();
 
-        assert_eq!(p5.publish(&req, None).unwrap_err().0, 4012, "an unauthenticated publish is refused");
-        assert_eq!(p5.publish(&req, Some("did:wba:eve.example.com:agents:eve:e1_x")).unwrap_err().0, 4012, "so is one signed by someone else");
-        let r = p5.publish(&req, Some(&id.0)).unwrap();
+        assert_eq!(direct.publish(&req, None).unwrap_err().0, 4012, "an unauthenticated publish is refused");
+        assert_eq!(direct.publish(&req, Some("did:wba:eve.example.com:agents:eve:e1_x")).unwrap_err().0, 4012, "so is one signed by someone else");
+        let r = direct.publish(&req, Some(&id.0)).unwrap();
         assert!(wire::parse_publish_prekey_bundle_result(&r).is_ok());
         assert_eq!(r["published_opk_count"], 2);
-        p5.publish(&req, Some(&id.0)).unwrap();
-        assert_eq!(p5.published.lock().unwrap().opks.values().next().unwrap().len(), 2, "the same one-time prekeys are not stored twice");
+        direct.publish(&req, Some(&id.0)).unwrap();
+        assert_eq!(direct.published.lock().unwrap().opks.values().next().unwrap().len(), 2, "the same one-time prekeys are not stored twice");
 
         let ask = |sender: &(String, String, String, [u8; 32]), require| {
             let g = wire::get_prekey_bundle_request(&service_meta(sender, "op-get"), &id.0, &id.1, None, Some(require)).unwrap();
-            p5.get_bundle(&g)
+            direct.get_bundle(&g)
         };
         let first = ask(&id, true).unwrap();
         assert!(wire::parse_get_prekey_bundle_result(&first).is_ok());
@@ -639,13 +642,13 @@ mod tests {
         assert!(plain.get("one_time_prekey").is_none() && plain.get("prekey_bundle").is_some(), "the bundle is still served without one");
         let stranger = ("did:wba:eve.example.com:agents:eve:e1_x".to_string(), "dev-eve".to_string(), String::new(), [0u8; 32]);
         let g = wire::get_prekey_bundle_request(&service_meta(&stranger, "op-get"), &id.0, &id.1, None, Some(false)).unwrap();
-        p5.publish(&req, Some(&id.0)).unwrap(); // refill
-        assert!(p5.get_bundle(&g).unwrap().get("one_time_prekey").is_none(), "a stranger gets no one-time prekey");
+        direct.publish(&req, Some(&id.0)).unwrap(); // refill
+        assert!(direct.get_bundle(&g).unwrap().get("one_time_prekey").is_none(), "a stranger gets no one-time prekey");
         let none = wire::get_prekey_bundle_request(&service_meta(&id, "op-get"), &id.0, "dev-other", None, None).unwrap();
-        assert_eq!(p5.get_bundle(&none).unwrap_err().0, 4000);
+        assert_eq!(direct.get_bundle(&none).unwrap_err().0, 4000);
 
         // kept on disk
-        let again = P5::new(me, &dm, vec![peer.did_document().unwrap()], HashMap::new(), None).unwrap();
+        let again = DirectMessaging::new(me, &dm, vec![peer.did_document().unwrap()], HashMap::new(), None).unwrap();
         assert_eq!(again.published_devices(), 1);
         assert_eq!(ask_count(&again), 2, "the pool survived a restart");
 
@@ -653,9 +656,9 @@ mod tests {
         let mut bad = bundle.clone();
         bad["signed_prekey"]["public_key_b64u"] = json!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
         let req = wire::publish_prekey_bundle_request(&service_meta(&id, "op-bad"), &bad, &[]).unwrap();
-        assert_eq!(p5.publish(&req, Some(&id.0)).unwrap_err().0, 4001);
+        assert_eq!(direct.publish(&req, Some(&id.0)).unwrap_err().0, 4001);
     }
-    fn ask_count(p: &P5) -> usize {
+    fn ask_count(p: &DirectMessaging) -> usize {
         p.published.lock().unwrap().opks.values().next().map_or(0, |v| v.len())
     }
 
@@ -705,36 +708,36 @@ mod tests {
         let peer_did = peer.did().unwrap().to_string();
         let (port, seen) = server(vec![503, 503, 200]);
         let endpoints = HashMap::from([(peer_did.clone(), format!("http://127.0.0.1:{port}/inbox"))]);
-        let p5 = Arc::new(P5::new(me.clone(), &dm, vec![peer.did_document().unwrap()], endpoints.clone(), None).unwrap());
-        p5.outbox.lock().unwrap().push(pending(&peer_did, "r1"));
+        let direct = Arc::new(DirectMessaging::new(me.clone(), &dm, vec![peer.did_document().unwrap()], endpoints.clone(), None).unwrap());
+        direct.outbox.lock().unwrap().push(pending(&peer_did, "r1"));
 
-        p5.run_outbox().await;
-        assert_eq!(p5.outbox_len(), 1, "the peer was down: the reply stays");
+        direct.run_outbox().await;
+        assert_eq!(direct.outbox_len(), 1, "the peer was down: the reply stays");
         {
-            let o = p5.outbox.lock().unwrap();
+            let o = direct.outbox.lock().unwrap();
             assert_eq!(o[0].attempts, 1);
             assert!(o[0].last_error.contains("503"));
             assert!(o[0].next_at > unix_now(), "and waits before the next attempt");
         }
-        p5.run_outbox().await;
-        assert_eq!(p5.outbox_len(), 1, "a pass before the time is up does nothing");
+        direct.run_outbox().await;
+        assert_eq!(direct.outbox_len(), 1, "a pass before the time is up does nothing");
         assert_eq!(seen.lock().unwrap().len(), 1);
 
         // a restart in between loses nothing
-        let p5 = Arc::new(P5::new(me, &dm, vec![peer.did_document().unwrap()], endpoints, None).unwrap());
-        assert_eq!(p5.outbox_len(), 1);
-        p5.outbox.lock().unwrap()[0].next_at = 0;
-        p5.run_outbox().await;
-        assert_eq!(p5.outbox_len(), 1);
-        p5.outbox.lock().unwrap()[0].next_at = 0;
-        p5.run_outbox().await;
-        assert_eq!(p5.outbox_len(), 0, "the third attempt got through");
+        let direct = Arc::new(DirectMessaging::new(me, &dm, vec![peer.did_document().unwrap()], endpoints, None).unwrap());
+        assert_eq!(direct.outbox_len(), 1);
+        direct.outbox.lock().unwrap()[0].next_at = 0;
+        direct.run_outbox().await;
+        assert_eq!(direct.outbox_len(), 1);
+        direct.outbox.lock().unwrap()[0].next_at = 0;
+        direct.run_outbox().await;
+        assert_eq!(direct.outbox_len(), 0, "the third attempt got through");
         let seen = seen.lock().unwrap();
         assert_eq!(seen.len(), 3);
         assert!(seen.iter().all(|r| r.to_ascii_lowercase().contains("signature-input:")), "every attempt is signed afresh");
         let nonces: std::collections::HashSet<&str> = seen.iter().filter_map(|r| r.split("nonce=\"").nth(1)).filter_map(|s| s.split('"').next()).collect();
         assert_eq!(nonces.len(), 3, "with a new nonce each time");
-        assert_eq!(std::fs::read_to_string(dm.join("p5-outbox.json")).unwrap().trim(), "[]");
+        assert_eq!(std::fs::read_to_string(dm.join("direct-outbox.json")).unwrap().trim(), "[]");
     }
 
     #[tokio::test]
@@ -743,16 +746,16 @@ mod tests {
         let (me, peer) = (node("me", 1, &dm), node("peer", 2, &dp));
         let peer_did = peer.did().unwrap().to_string();
         let (port, _) = server(vec![400]);
-        let p5 = Arc::new(P5::new(me.clone(), &dm, vec![peer.did_document().unwrap()], HashMap::from([(peer_did.clone(), format!("http://127.0.0.1:{port}/inbox"))]), None).unwrap());
-        p5.outbox.lock().unwrap().push(pending(&peer_did, "r-bad"));
-        p5.run_outbox().await;
-        assert_eq!(p5.outbox_len(), 0, "HTTP 400 will not get better by repeating it");
+        let direct = Arc::new(DirectMessaging::new(me.clone(), &dm, vec![peer.did_document().unwrap()], HashMap::from([(peer_did.clone(), format!("http://127.0.0.1:{port}/inbox"))]), None).unwrap());
+        direct.outbox.lock().unwrap().push(pending(&peer_did, "r-bad"));
+        direct.run_outbox().await;
+        assert_eq!(direct.outbox_len(), 0, "HTTP 400 will not get better by repeating it");
 
         let d2 = dir("noep-me");
-        let p5 = Arc::new(P5::new(node("me", 1, &d2), &d2, vec![peer.did_document().unwrap()], HashMap::new(), None).unwrap());
-        p5.outbox.lock().unwrap().push(pending(&peer_did, "r-wait"));
-        p5.run_outbox().await;
-        let o = p5.outbox.lock().unwrap();
+        let direct = Arc::new(DirectMessaging::new(node("me", 1, &d2), &d2, vec![peer.did_document().unwrap()], HashMap::new(), None).unwrap());
+        direct.outbox.lock().unwrap().push(pending(&peer_did, "r-wait"));
+        direct.run_outbox().await;
+        let o = direct.outbox.lock().unwrap();
         assert_eq!(o.len(), 1);
         assert!(o[0].last_error.contains("no endpoint"));
     }
@@ -763,11 +766,11 @@ mod tests {
         let (me, peer) = (node("me", 1, &dm), node("peer", 2, &dp));
         let peer_did = peer.did().unwrap().to_string();
         let (port, _) = server(vec![503]);
-        let p5 = Arc::new(P5::new(me, &dm, vec![peer.did_document().unwrap()], HashMap::from([(peer_did.clone(), format!("http://127.0.0.1:{port}/inbox"))]), None).unwrap());
+        let direct = Arc::new(DirectMessaging::new(me, &dm, vec![peer.did_document().unwrap()], HashMap::from([(peer_did.clone(), format!("http://127.0.0.1:{port}/inbox"))]), None).unwrap());
         let mut p = pending(&peer_did, "r-old");
         p.created = unix_now() - OUTBOX_MAX_AGE - 10;
-        p5.outbox.lock().unwrap().push(p);
-        p5.run_outbox().await;
-        assert_eq!(p5.outbox_len(), 0);
+        direct.outbox.lock().unwrap().push(p);
+        direct.run_outbox().await;
+        assert_eq!(direct.outbox_len(), 0);
     }
 }

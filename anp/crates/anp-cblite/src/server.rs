@@ -48,13 +48,18 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .route("/.well-known/agent-descriptions", get(well_known_descriptions))
         .route("/discover", get(discover))
         .route("/.well-known/handle/:local", get(handle_resolution))
-        .route("/anp/p5", post(p5_rpc))
+        .route("/anp/direct", post(direct_messaging_rpc))
+        .route("/anp/p5", post(direct_messaging_rpc)) // the old path, kept for peers that were given it
         .route("/anp/meta", post(meta_message))
         .route("/anp/meta/ws", get(meta_ws))
-        .route("/anp/p6", post(p6_rpc))
-        .route("/anp/p6/provision", post(p6_provision))
-        .route("/anp/p6/ws", get(p6_ws))
-        .route("/groups/:name/:fingerprint/did.json", get(p6_group_document))
+        .route("/anp/groups", post(group_host_rpc))
+        .route("/anp/groups/provision", post(group_host_provision))
+        .route("/anp/groups/ws", get(group_host_ws))
+        // the old paths, kept for devices that were given them
+        .route("/anp/p6", post(group_host_rpc))
+        .route("/anp/p6/provision", post(group_host_provision))
+        .route("/anp/p6/ws", get(group_host_ws))
+        .route("/groups/:name/:fingerprint/did.json", get(group_document))
         .route("/anp/meta/protocols", get(meta_protocols))
         .route("/", post(rpc))
         .layer(axum::middleware::from_fn_with_state(hub.clone(), crate::httpauth::middleware))
@@ -135,20 +140,20 @@ async fn handle_resolution(State(hub): State<Arc<Hub>>, Path(local): Path<String
     ([(axum::http::header::CONTENT_TYPE, "application/json")], doc.to_string()).into_response()
 }
 /// ANP P6 group host (see `p6`): JSON-RPC from group devices.
-async fn p6_rpc(State(hub): State<Arc<Hub>>, request: axum::http::Request<axum::body::Body>) -> Response {
-    let Some((p6, require_caller)) = hub.p6() else { return StatusCode::NOT_FOUND.into_response() };
+async fn group_host_rpc(State(hub): State<Arc<Hub>>, request: axum::http::Request<axum::body::Body>) -> Response {
+    let Some((groups, require_caller)) = hub.group_host() else { return StatusCode::NOT_FOUND.into_response() };
     let caller = request.extensions().get::<crate::httpauth::Caller>().map(|c| c.0.clone());
     let Ok(body) = axum::body::to_bytes(request.into_body(), 8 * 1024 * 1024).await else { return StatusCode::PAYLOAD_TOO_LARGE.into_response() };
     let req: Value = match serde_json::from_slice(&body) {
         Ok(v) => v,
         Err(e) => return Json(json!({ "jsonrpc": "2.0", "id": null, "error": { "code": -32700, "message": e.to_string() } })).into_response(),
     };
-    Json(p6.handle(req, caller, require_caller).await).into_response()
+    Json(groups.handle(req, caller, require_caller).await).into_response()
 }
 
 /// Make a group DID on this node's domain: `{"name": "blue"}`. Needs a signed request when the node requires them.
-async fn p6_provision(State(hub): State<Arc<Hub>>, request: axum::http::Request<axum::body::Body>) -> Response {
-    let Some((p6, require_caller)) = hub.p6() else { return StatusCode::NOT_FOUND.into_response() };
+async fn group_host_provision(State(hub): State<Arc<Hub>>, request: axum::http::Request<axum::body::Body>) -> Response {
+    let Some((groups, require_caller)) = hub.group_host() else { return StatusCode::NOT_FOUND.into_response() };
     if require_caller && request.extensions().get::<crate::httpauth::Caller>().is_none() {
         return (StatusCode::UNAUTHORIZED, "sign the request\n").into_response();
     }
@@ -157,19 +162,19 @@ async fn p6_provision(State(hub): State<Arc<Hub>>, request: axum::http::Request<
     let name = parsed["name"].as_str().map(str::to_string).unwrap_or_default();
     // an optional policy: `max_members` (at least 1)
     let max_members = parsed["max_members"].as_u64();
-    match p6.provision(&name, max_members) {
+    match groups.provision(&name, max_members) {
         Ok(v) => Json(v).into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, format!("{e}\n")).into_response(),
     }
 }
 
-/// The push channel of a device's mailbox: `GET /anp/p6/ws?did=DID&device=ID`, upgraded to a WebSocket. What waits for the device is sent
+/// The push channel of a device's mailbox: `GET /anp/groups/ws?did=DID&device=ID`, upgraded to a WebSocket. What waits for the device is sent
 /// at once and what arrives later as it arrives, each as a text frame `{"id": ..., "notification": ...}` (the same objects `group.e2ee.pull`
 /// returns); the device answers with `{"ack": [ids]}` and those are dropped. With `--require-auth` the signed upgrade request must be the
 /// device's own DID, exactly as for a pull.
-async fn p6_ws(State(hub): State<Arc<Hub>>, Query(q): Query<std::collections::HashMap<String, String>>, caller: Option<axum::Extension<crate::httpauth::Caller>>, ws: axum::extract::ws::WebSocketUpgrade) -> Response {
+async fn group_host_ws(State(hub): State<Arc<Hub>>, Query(q): Query<std::collections::HashMap<String, String>>, caller: Option<axum::Extension<crate::httpauth::Caller>>, ws: axum::extract::ws::WebSocketUpgrade) -> Response {
     use axum::extract::ws::Message;
-    let Some((p6, require_caller)) = hub.p6() else { return StatusCode::NOT_FOUND.into_response() };
+    let Some((groups, require_caller)) = hub.group_host() else { return StatusCode::NOT_FOUND.into_response() };
     let (Some(did), Some(device)) = (q.get("did").cloned(), q.get("device").cloned()) else { return (StatusCode::BAD_REQUEST, "did and device are required\n").into_response() };
     if require_caller && caller.as_ref().map(|c| c.0 .0.as_str()) != Some(did.as_str()) {
         return (StatusCode::UNAUTHORIZED, "a mailbox is read by the device's own DID (sign the request)\n").into_response();
@@ -178,10 +183,10 @@ async fn p6_ws(State(hub): State<Arc<Hub>>, Query(q): Query<std::collections::Ha
         let mut sent: std::collections::HashSet<String> = std::collections::HashSet::new();
         loop {
             // register for the next delivery before reading the mailbox, so one that lands in between is not missed
-            let wake = p6.delivery_wake();
+            let wake = groups.delivery_wake();
             tokio::pin!(wake);
             wake.as_mut().enable();
-            for (id, n) in p6.waiting(&did, &device) {
+            for (id, n) in groups.waiting(&did, &device) {
                 if sent.insert(id.clone()) && socket.send(Message::Text(json!({ "id": id, "notification": n }).to_string())).await.is_err() {
                     return;
                 }
@@ -194,7 +199,7 @@ async fn p6_ws(State(hub): State<Arc<Hub>>, Query(q): Query<std::collections::Ha
                     Some(Ok(Message::Text(t))) => {
                         let ids: Vec<String> = serde_json::from_str::<Value>(&t).ok().and_then(|v| v["ack"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())).unwrap_or_default();
                         if !ids.is_empty() {
-                            p6.acknowledge(&did, &device, &ids);
+                            groups.acknowledge(&did, &device, &ids);
                             for i in &ids {
                                 sent.remove(i);
                             }
@@ -212,8 +217,8 @@ async fn p6_ws(State(hub): State<Arc<Hub>>, Query(q): Query<std::collections::Ha
 }
 
 /// The DID document of a group this node provisioned.
-async fn p6_group_document(State(hub): State<Arc<Hub>>, Path((name, fp)): Path<(String, String)>) -> Response {
-    let Some((p6, _)) = hub.p6() else { return StatusCode::NOT_FOUND.into_response() };
+async fn group_document(State(hub): State<Arc<Hub>>, Path((name, fp)): Path<(String, String)>) -> Response {
+    let Some((groups, _)) = hub.group_host() else { return StatusCode::NOT_FOUND.into_response() };
     let _ = (&name, &fp);
     let wanted = format!("/groups/{name}/{fp}/did.json");
     // the DID of a group is `did:wba:<authority>:groups:<name>:<fp>`: look it up by the path it resolves to
@@ -223,7 +228,7 @@ async fn p6_group_document(State(hub): State<Arc<Hub>>, Path((name, fp)): Path<(
         None => (authority.clone(), None),
     };
     let did = format!("did:wba:{}{}:groups:{name}:{fp}", host, port.map(|p| format!("%3A{p}")).unwrap_or_default());
-    match p6.group_document(&did) {
+    match groups.group_document(&did) {
         Some(doc) if anp_did::WbaDid::parse(&did).map(|d| d.document_path()).as_deref() == Ok(wanted.as_str()) => ([(axum::http::header::CONTENT_TYPE, "application/did+json")], doc.to_string()).into_response(),
         _ => StatusCode::NOT_FOUND.into_response(),
     }
@@ -375,15 +380,15 @@ async fn discover(State(hub): State<Arc<Hub>>) -> Response {
 }
 
 /// ANP-09 P5 messaging: the key-service call and `direct.send` from peers on other ANP stacks (see `p5`).
-async fn p5_rpc(State(hub): State<Arc<Hub>>, request: axum::http::Request<axum::body::Body>) -> Response {
-    let Some(p5) = hub.p5() else { return StatusCode::NOT_FOUND.into_response() };
+async fn direct_messaging_rpc(State(hub): State<Arc<Hub>>, request: axum::http::Request<axum::body::Body>) -> Response {
+    let Some(direct) = hub.direct_messaging() else { return StatusCode::NOT_FOUND.into_response() };
     let caller = request.extensions().get::<crate::httpauth::Caller>().map(|c| c.0.clone());
     let Ok(body) = axum::body::to_bytes(request.into_body(), 8 * 1024 * 1024).await else { return StatusCode::PAYLOAD_TOO_LARGE.into_response() };
     let req: Value = match serde_json::from_slice(&body) {
         Ok(v) => v,
         Err(e) => return Json(json!({ "jsonrpc": "2.0", "id": null, "error": { "code": -32700, "message": e.to_string() } })).into_response(),
     };
-    Json(p5.handle(&hub, req, caller).await).into_response()
+    Json(direct.handle(&hub, req, caller).await).into_response()
 }
 
 /// Publish a revocation (the output of `anp-admin revoke`). Only a bundle signed by the authority is accepted;

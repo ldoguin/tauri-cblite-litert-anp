@@ -1,5 +1,5 @@
-# P6 group host on the node: this project's MLS devices (alice, bob, carol) talk to /anp/p6 over HTTP with signed requests (ANP-02).
-#   pwsh scripts/e2e-p6-host.ps1 [-Exe <target>\debug\anp-node.exe] [-Port 18950]
+# The node as a group host for end-to-end encrypted groups (ANP P6): this project's MLS devices (alice, bob, carol) talk to /anp/groups over HTTP with signed requests (ANP-02).
+#   pwsh scripts/e2e-group-host.ps1 [-Exe <target>\debug\anp-node.exe] [-Port 18950]
 param(
   [string]$Exe = "",
   [int]$Port = 18950,
@@ -18,7 +18,7 @@ $env:ANP_P6_STEP = "docs"; $env:ANP_P6_DIR = $Work
 cargo test -q -p anp-group-host --test node_live live_docs 2>&1 | Out-Null
 
 $origin = "http://127.0.0.1:$Port"
-$a = @("--name", "grp", "--data", "$Work\node", "--http-port", $Port, "--did-host", "groups.example", "--public-origin", $origin, "--require-auth", "--p6-host")
+$a = @("--name", "grp", "--data", "$Work\node", "--http-port", $Port, "--did-host", "groups.example", "--public-origin", $origin, "--require-auth", "--group-host")
 foreach ($f in Get-ChildItem $Work -Filter *.did.json) { $a += @("--allow-caller", $f.FullName) }
 $p = Start-Process $Exe -ArgumentList $a -NoNewWindow -PassThru -RedirectStandardOutput "$Work\node.out" -RedirectStandardError "$Work\node.err"
 $fail = 0
@@ -41,7 +41,7 @@ if ($have) {
   $env:ANP_P6_STEP = "docs"; $env:ANP_P6_DIR = $W2
   cargo test -q -p anp-group-host --test node_live live_docs 2>&1 | Out-Null
   $port2 = $Port + 1; $origin2 = "http://127.0.0.1:$port2"
-  $a2 = @("--name", "grp2", "--data", "$W2\node", "--http-port", $port2, "--did-host", "groups.example", "--public-origin", $origin2, "--p6-host", "--p6-open-mailboxes")
+  $a2 = @("--name", "grp2", "--data", "$W2\node", "--http-port", $port2, "--did-host", "groups.example", "--public-origin", $origin2, "--group-host", "--group-open-mailboxes")
   foreach ($f in Get-ChildItem $W2 -Filter *.did.json) { $a2 += @("--allow-caller", $f.FullName) }
   $p2 = Start-Process $Exe -ArgumentList $a2 -NoNewWindow -PassThru -RedirectStandardOutput "$W2\node.out" -RedirectStandardError "$W2\node.err"
   try {

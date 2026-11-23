@@ -139,14 +139,14 @@ pub struct Hub {
     handles: Mutex<Vec<String>>,
     /// ANP-06: the protocols this node can negotiate (`--meta-protocol`).
     meta: Mutex<Option<Arc<crate::meta::MetaService>>>,
-    /// ANP P6: this node as a group host (`--p6-host`).
-    p6: Mutex<Option<Arc<crate::p6::P6>>>,
+    /// ANP P6: this node as a group host (`--group-host`).
+    group_host: Mutex<Option<Arc<crate::group_host::GroupHostService>>>,
     /// Whether the node requires signed HTTP requests (so a mailbox pull can be tied to its caller).
-    p6_require_caller: std::sync::atomic::AtomicBool,
+    group_host_require_caller: std::sync::atomic::AtomicBool,
     /// Requests the HTTP layer refused, newest last (reason, unix ms).
     http_refusals: Mutex<Vec<(String, i64)>>,
     /// ANP-09 P5 messaging for peers on other ANP stacks (see `p5`).
-    p5: Mutex<Option<Arc<crate::p5::P5>>>,
+    direct_messaging: Mutex<Option<Arc<crate::direct_messaging::DirectMessaging>>>,
 }
 
 impl Hub {
@@ -175,10 +175,10 @@ impl Hub {
             http_auth: Mutex::new(None),
             handles: Mutex::new(Vec::new()),
             meta: Mutex::new(None),
-            p6: Mutex::new(None),
-            p6_require_caller: std::sync::atomic::AtomicBool::new(false),
+            group_host: Mutex::new(None),
+            group_host_require_caller: std::sync::atomic::AtomicBool::new(false),
             http_refusals: Mutex::new(Vec::new()),
-            p5: Mutex::new(None),
+            direct_messaging: Mutex::new(None),
         });
 
         // Task changes (local or replicated) -> broadcast for waiters/streams.
@@ -237,13 +237,13 @@ impl Hub {
         *self.posture.lock().unwrap() = v;
     }
 
-    pub fn set_p6(&self, p: crate::p6::P6, require_caller: bool) {
-        *self.p6.lock().unwrap() = Some(Arc::new(p));
-        self.p6_require_caller.store(require_caller, std::sync::atomic::Ordering::SeqCst);
+    pub fn set_group_host(&self, p: crate::group_host::GroupHostService, require_caller: bool) {
+        *self.group_host.lock().unwrap() = Some(Arc::new(p));
+        self.group_host_require_caller.store(require_caller, std::sync::atomic::Ordering::SeqCst);
     }
 
-    pub fn p6(&self) -> Option<(Arc<crate::p6::P6>, bool)> {
-        self.p6.lock().unwrap().clone().map(|p| (p, self.p6_require_caller.load(std::sync::atomic::Ordering::SeqCst)))
+    pub fn group_host(&self) -> Option<(Arc<crate::group_host::GroupHostService>, bool)> {
+        self.group_host.lock().unwrap().clone().map(|p| (p, self.group_host_require_caller.load(std::sync::atomic::Ordering::SeqCst)))
     }
 
     pub fn set_meta(&self, m: crate::meta::MetaService) {
@@ -270,16 +270,16 @@ impl Hub {
         self.http_auth.lock().unwrap().clone()
     }
 
-    pub fn set_p5(&self, p: crate::p5::P5) {
+    pub fn set_direct_messaging(&self, p: crate::direct_messaging::DirectMessaging) {
         let p = Arc::new(p);
         if tokio::runtime::Handle::try_current().is_ok() {
             p.start(); // the loop that delivers (and retries) replies
         }
-        *self.p5.lock().unwrap() = Some(p);
+        *self.direct_messaging.lock().unwrap() = Some(p);
     }
 
-    pub fn p5(&self) -> Option<Arc<crate::p5::P5>> {
-        self.p5.lock().unwrap().clone()
+    pub fn direct_messaging(&self) -> Option<Arc<crate::direct_messaging::DirectMessaging>> {
+        self.direct_messaging.lock().unwrap().clone()
     }
 
     pub fn note_http_refusal(&self, why: &str) {

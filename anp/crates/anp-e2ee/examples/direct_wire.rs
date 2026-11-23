@@ -1,7 +1,7 @@
 //! Wire objects made here, and wire objects made by another implementation, for checking each other. See `scripts/interop`.
 //!
-//!   p5_wire build <fixture> <t_init> <t_cipher> <out>   build every request and result from a conversation's first messages
-//!   p5_wire check <other.json>                          parse what another implementation built (same member names)
+//!   direct_wire build <fixture> <t_init> <t_cipher> <out>   build every request and result from a conversation's first messages
+//!   direct_wire check <other.json>                          parse what another implementation built (same member names)
 
 use anp_e2ee::wire::*;
 use serde_json::{json, Value};

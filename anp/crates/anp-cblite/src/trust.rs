@@ -755,19 +755,19 @@ impl Trust {
     }
 
     /// Who we are for P5: DID, device id, key-agreement key id and secret. `None` without end-to-end encryption.
-    pub fn p5_identity(&self) -> Option<(String, String, String, [u8; 32])> {
+    pub fn direct_identity(&self) -> Option<(String, String, String, [u8; 32])> {
         let (e, d) = (self.e2ee.as_ref()?, self.did.as_ref()?);
         Some((d.did.clone(), Self::device_id(&self.node_id), e.ka_id.clone(), e.ka_secret))
     }
 
     /// The signed prekey a bundle id names, if we still hold it: its id and secret.
-    pub fn p5_prekey_for_bundle(&self, bundle_id: &str) -> Option<(String, [u8; 32])> {
+    pub fn direct_prekey_for_bundle(&self, bundle_id: &str) -> Option<(String, [u8; 32])> {
         let e = self.e2ee.as_ref()?;
         e.prekeys.lock().unwrap().iter().find(|k| format!("bundle-{}", k.id) == bundle_id).map(|k| (k.id.clone(), k.secret))
     }
 
     /// Hand out one one-time prekey (and never again): `{key_id, public_key_b64u}`. `None` when the pool is empty.
-    pub fn p5_issue_opk(&self) -> Option<Value> {
+    pub fn direct_issue_one_time_prekey(&self) -> Option<Value> {
         let e = self.e2ee.as_ref()?;
         let issued = {
             let mut pool = e.opks.lock().unwrap();
@@ -783,7 +783,7 @@ impl Trust {
     }
 
     /// Use up a one-time prekey that was handed out: its secret, once. A second call for the same id returns `None`.
-    pub fn p5_consume_opk(&self, id: &str) -> Option<[u8; 32]> {
+    pub fn direct_consume_one_time_prekey(&self, id: &str) -> Option<[u8; 32]> {
         let e = self.e2ee.as_ref()?;
         let mut pool = e.opks.lock().unwrap();
         let secret = pool.issued.remove(id)?;
@@ -2095,41 +2095,41 @@ mod tests {
     fn one_time_prekeys_are_handed_out_once_used_once_and_kept_across_restarts() {
         let d = e2ee_dir("opk1");
         let n = e2ee_node("alice", 1, &d);
-        let a = n.p5_issue_opk().expect("one is ready");
-        let b = n.p5_issue_opk().unwrap();
+        let a = n.direct_issue_one_time_prekey().expect("one is ready");
+        let b = n.direct_issue_one_time_prekey().unwrap();
         assert_ne!(a["key_id"], b["key_id"], "never the same key twice");
         let id = a["key_id"].as_str().unwrap().to_string();
         // the public half the SDK would use, and the secret we keep
-        let secret = n.p5_consume_opk(&id).expect("an issued key can be used");
+        let secret = n.direct_consume_one_time_prekey(&id).expect("an issued key can be used");
         assert_eq!(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(anp_e2ee::public_of(&secret)), a["public_key_b64u"].as_str().unwrap());
-        assert!(n.p5_consume_opk(&id).is_none(), "and only once");
-        assert!(n.p5_consume_opk("opk-never-issued").is_none(), "a key that was never handed out cannot be used");
+        assert!(n.direct_consume_one_time_prekey(&id).is_none(), "and only once");
+        assert!(n.direct_consume_one_time_prekey("opk-never-issued").is_none(), "a key that was never handed out cannot be used");
         // a restart: b is still issued and usable, a is still used up, and the pool is topped up
         let m = e2ee_node("alice", 1, &d);
-        assert!(m.p5_consume_opk(&id).is_none());
+        assert!(m.direct_consume_one_time_prekey(&id).is_none());
         let bid = b["key_id"].as_str().unwrap();
-        assert!(m.p5_consume_opk(bid).is_some(), "an issued, unused key survives a restart");
+        assert!(m.direct_consume_one_time_prekey(bid).is_some(), "an issued, unused key survives a restart");
         // the pool is never empty for long: 10 ready after every start, and each issue refills
         for _ in 0..25 {
-            assert!(m.p5_issue_opk().is_some());
+            assert!(m.direct_issue_one_time_prekey().is_some());
         }
         // the identity and the signed prekey a bundle names are available for accepting inits
-        let (did, device, ka_id, _ka) = m.p5_identity().unwrap();
+        let (did, device, ka_id, _ka) = m.direct_identity().unwrap();
         assert!(did.starts_with("did:wba:alice.example.com:agents:alice:e1_") && device == "dev-alice" && ka_id.ends_with("#key-agreement-1"));
         let bundle = m.e2ee_bundle().unwrap();
-        let (spk_id, _) = m.p5_prekey_for_bundle(bundle["bundle_id"].as_str().unwrap()).expect("the prekey of the published bundle");
+        let (spk_id, _) = m.direct_prekey_for_bundle(bundle["bundle_id"].as_str().unwrap()).expect("the prekey of the published bundle");
         assert_eq!(bundle["signed_prekey"]["key_id"], spk_id.as_str());
-        assert!(m.p5_prekey_for_bundle("bundle-unknown").is_none());
-        assert!(node("x", 9).p5_issue_opk().is_none() && node("x", 9).p5_identity().is_none(), "nothing without end-to-end encryption");
+        assert!(m.direct_prekey_for_bundle("bundle-unknown").is_none());
+        assert!(node("x", 9).direct_issue_one_time_prekey().is_none() && node("x", 9).direct_identity().is_none(), "nothing without end-to-end encryption");
     }
 
     #[test]
     fn a_did_document_can_advertise_a_message_service() {
         let t = node("alice", 1)
-            .with_did_services("alice.example.com", Some(8800), None, vec![serde_json::json!({ "id": "#message", "type": "ANPMessageService", "serviceEndpoint": "https://alice.example.com:8800/anp/p5" })])
+            .with_did_services("alice.example.com", Some(8800), None, vec![serde_json::json!({ "id": "#message", "type": "ANPMessageService", "serviceEndpoint": "https://alice.example.com:8800/anp/direct" })])
             .unwrap();
         let v = anp_did::verify_document(&t.did_document().unwrap(), t.did()).unwrap();
-        assert_eq!(v.service_endpoint("ANPMessageService").as_deref(), Some("https://alice.example.com:8800/anp/p5"));
+        assert_eq!(v.service_endpoint("ANPMessageService").as_deref(), Some("https://alice.example.com:8800/anp/direct"));
         let svc = v.services().into_iter().find(|s| s["type"] == "ANPMessageService").unwrap();
         assert!(svc["id"].as_str().unwrap().ends_with("#message") && svc["id"].as_str().unwrap().starts_with("did:wba:"), "a relative id becomes a DID URL");
         assert!(v.service_endpoint("AgentDescription").is_some(), "the agent description service stays");

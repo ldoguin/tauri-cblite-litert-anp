@@ -59,7 +59,7 @@ foreach ($f in Get-ChildItem $Work -Filter *.did.json) { scp.exe @scpOpts $f.Ful
 $origin = "http://${RemoteAddr}:$Port"
 $docs = (Get-ChildItem $Work -Filter *.did.json | ForEach-Object { "--allow-caller ~/x/p6remote/docs/$($_.Name)" }) -join " "
 $start = "lib=`$(ls -d $RemoteDir/target/debug/build/couchbase_lite-*/out | head -1); export LD_LIBRARY_PATH=`$lib RUST_LOG=warn; cd $RemoteDir/target/debug; " +
-  "nohup ./anp-node --name grp --data ~/x/p6remote/node --http-port $Port --did-host groups.example --public-origin $origin --require-auth --p6-host $docs > ~/x/p6remote/node.out 2> ~/x/p6remote/node.err < /dev/null & echo started"
+  "nohup ./anp-node --name grp --data ~/x/p6remote/node --http-port $Port --did-host groups.example --public-origin $origin --require-auth --group-host $docs > ~/x/p6remote/node.out 2> ~/x/p6remote/node.err < /dev/null & echo started"
 $fail = 0
 try {
   RemoteSh $start

@@ -6,7 +6,7 @@ device (LiteRT-LM), in two generations that share one task layer:
 | Folder | What it is |
 |---|---|
 | [`a2a/`](a2a/README.md) | The original project: an [A2A](https://a2a-protocol.org) 1.0 node on Couchbase Lite, Biscuit tokens, TLS and admission, the field-inspection demo, and a Tauri desktop app. |
-| [`anp/`](anp/README.md) | The same mesh moved onto the [Agent Network Protocol](https://github.com/agent-network-protocol/AgentNetworkProtocol): `did:wba` identities, signed requests, end-to-end encryption, P5 messaging and P6 groups, descriptions, discovery, handles, the meta-protocol, a search agent; interop checks against the official SDKs, and `cargo xtask` end-to-end tests. |
+| [`anp/`](anp/README.md) | The same mesh moved onto the [Agent Network Protocol](https://github.com/agent-network-protocol/AgentNetworkProtocol): `did:wba` identities, signed requests, end-to-end encrypted direct messages and groups, signed agent descriptions, discovery, human-readable handles, protocol negotiation, a search agent (see the [glossary](anp/README.md#the-anp-terms-used-here)); interop checks against the official SDKs, and `cargo xtask` end-to-end tests. |
 | `common/` | What both use as is: [`a2a-core`](common/crates/a2a-core/src/lib.rs) (the A2A 1.0 JSON-RPC types, the `Executor` trait an agent implements, the on-device LLM executor, the control-room demo page) and the recording viewer used by both `record-demo.sh` scripts. |
 
 ```text

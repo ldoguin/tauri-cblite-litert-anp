@@ -49,7 +49,7 @@ pub fn run(args: &[String]) -> Result<i32, String> {
         }
     }
     let origin = format!("http://{addr}:{port}");
-    let p6 = remote.spawn(&format!("{env} ./anp-node --name grp --data ~/x/p6remote/node --http-port {port} --did-host groups.example --public-origin {origin} --require-auth --p6-host{docs} > ~/x/p6remote/node.out 2> ~/x/p6remote/node.err"));
+    let p6 = remote.spawn(&format!("{env} ./anp-node --name grp --data ~/x/p6remote/node --http-port {port} --did-host groups.example --public-origin {origin} --require-auth --group-host{docs} > ~/x/p6remote/node.out 2> ~/x/p6remote/node.err"));
     sleep(5);
     let out = cargo_cmd()
         .args(["test", "-q", "-p", "anp-group-host", "--test", "node_live", "live_", "--", "--nocapture", "--test-threads=1"])

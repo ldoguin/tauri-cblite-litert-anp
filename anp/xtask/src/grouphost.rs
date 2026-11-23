@@ -1,6 +1,6 @@
-//! `cargo xtask p6-host`: this project's MLS devices (alice, bob, carol, dave, erin, frank) use the node's P6 group host over HTTP with signed
+//! `cargo xtask group-host` (also `p6-host`): this project's MLS devices (alice, bob, carol, dave, erin, frank) use the node's group host (ANP P6) over HTTP with signed
 //! requests (ANP-02): the live tests of `crates/anp-group-host/tests/node_live.rs` against a node started here. The part of
-//! `scripts/e2e-p6-host.ps1` where the official Rust SDK is a device (it runs in WSL) is not in this task.
+//! `scripts/e2e-group-host.ps1` where the official Rust SDK is a device (it runs in WSL) is not in this task.
 
 use crate::harness::*;
 use std::process::Stdio;
@@ -17,7 +17,7 @@ pub fn run() -> Result<i32, String> {
     }
     let port = 18950u16;
     let origin = format!("http://127.0.0.1:{port}");
-    let mut extra: Vec<String> = ["--did-host", "groups.example", "--public-origin", &origin, "--require-auth", "--p6-host"].iter().map(|s| s.to_string()).collect();
+    let mut extra: Vec<String> = ["--did-host", "groups.example", "--public-origin", &origin, "--require-auth", "--group-host"].iter().map(|s| s.to_string()).collect();
     for f in std::fs::read_dir(&work).map_err(|e| e.to_string())?.flatten() {
         if f.file_name().to_string_lossy().ends_with(".did.json") {
             extra.push("--allow-caller".into());
@@ -40,6 +40,6 @@ pub fn run() -> Result<i32, String> {
         text.contains("test result: ok. 6 passed"),
         format!("\n{text}\n--- node log\n{}", std::fs::read_to_string(work.join("node.err.txt")).unwrap_or_default()),
     );
-    c.note("the official SDK as a device (WSL) is in scripts/e2e-p6-host.ps1, not here");
+    c.note("the official SDK as a device (WSL) is in scripts/e2e-group-host.ps1, not here");
     Ok(c.finish())
 }

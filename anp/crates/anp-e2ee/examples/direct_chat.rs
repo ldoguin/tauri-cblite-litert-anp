@@ -1,8 +1,8 @@
 //! One leg of a P5 conversation with another implementation, through files. See `scripts/interop`.
 //!
-//!   p5_chat init   <fixture> <leg> <state_out> <t_out> <text>             start as alice, sealing the text to bob
-//!   p5_chat accept <fixture> <leg> <t_in> <state_out> <t_out> <text>...   be bob: accept the init in t_in, then send the texts
-//!   p5_chat recv   <fixture> <leg> <state_in> <t_in> <order> <state_out> <t_out> <text>...
+//!   direct_chat init   <fixture> <leg> <state_out> <t_out> <text>             start as alice, sealing the text to bob
+//!   direct_chat accept <fixture> <leg> <t_in> <state_out> <t_out> <text>...   be bob: accept the init in t_in, then send the texts
+//!   direct_chat recv   <fixture> <leg> <state_in> <t_in> <order> <state_out> <t_out> <text>...
 //!                                                                          decrypt t_in's messages in `order` (e.g. 2,0,1), then send
 //!
 //! A transcript is `{"messages": [{"kind": "init"|"cipher", "metadata": …, "body": …, "text": "…"}]}`; `text` is what the
