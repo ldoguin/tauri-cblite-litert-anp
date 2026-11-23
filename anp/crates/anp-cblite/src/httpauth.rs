@@ -184,6 +184,8 @@ pub fn is_local_control(path: &str) -> bool {
         || path == "/store/sim"
         || path.starts_with("/store/sim/")
         || path == "/telemetry"
+        || path == "/anp/quotes"
+        || path.starts_with("/anp/quotes/")
 }
 
 fn unauthorized(origin: &str, why: &str) -> Response {

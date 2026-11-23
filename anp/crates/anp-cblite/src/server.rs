@@ -64,6 +64,8 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .route("/store/sim", get(store_sim_get))
         .route("/store/sim/:action", post(store_sim_post))
         .route("/telemetry", get(telemetry_get))
+        .route("/anp/quotes", get(quotes_get))
+        .route("/anp/quotes/:action", post(quotes_post))
         .route("/anp/meta", post(meta_message))
         .route("/anp/meta/ws", get(meta_ws))
         .route("/anp/groups", post(group_host_rpc))
@@ -147,6 +149,66 @@ async fn store_sim_post(State(hub): State<Arc<Hub>>, Path(action): Path<String>,
     match r {
         Ok(v) => Json(v).into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, format!("{e}\n")).into_response(),
+    }
+}
+
+/// The quote desks: what this node asked, was offered, accepted and committed (buyer), and what it answered (seller).
+async fn quotes_get(State(hub): State<Arc<Hub>>, addr: Option<ConnectInfo<SocketAddr>>, headers: HeaderMap) -> Response {
+    if !local_caller(addr.as_ref(), &headers) {
+        return not_local();
+    }
+    Json(json!({ "buyer": hub.quote_buyer().map(|b| b.state()), "seller": hub.quote_seller().map(|s| s.state()) })).into_response()
+}
+
+/// The buyer's tools: `request` `{to, category, pallets, need?}`, `accept` `{quote}`, `authority` `{token?, budget?}` (euros), `audit`
+/// `{acceptance}`. A refusal before signing says why in `error` and, for a limit, `needsApproval: true`.
+async fn quotes_post(State(hub): State<Arc<Hub>>, Path(action): Path<String>, addr: Option<ConnectInfo<SocketAddr>>, headers: HeaderMap, body: Bytes) -> Response {
+    if !local_caller(addr.as_ref(), &headers) {
+        return not_local();
+    }
+    let Some(b) = hub.quote_buyer() else { return (StatusCode::NOT_FOUND, "this node does not buy (--spend-token)\n").into_response() };
+    let v: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let s = |k: &str| v[k].as_str().map(str::to_string).ok_or_else(|| format!("\"{k}\" is required"));
+    let bad = |e: String| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response();
+    match action.as_str() {
+        "request" => match (s("to"), s("category")) {
+            (Ok(to), Ok(cat)) => match b.request(&to, &cat, v["pallets"].as_u64().unwrap_or(1) as u32, v["need"].clone()).await {
+                Ok(id) => Json(json!({ "request": id })).into_response(),
+                Err(e) => bad(e),
+            },
+            (Err(e), _) | (_, Err(e)) => bad(e),
+        },
+        "accept" => match s("quote") {
+            Ok(q) => match b.accept(&q).await {
+                Ok(id) => Json(json!({ "acceptance": id })).into_response(),
+                Err(e) => {
+                    let approval = matches!(e, anp_quote::QuoteError::OverBudget { .. } | anp_quote::QuoteError::Unauthorized(_));
+                    (StatusCode::BAD_REQUEST, Json(json!({ "error": e.to_string(), "needsApproval": approval }))).into_response()
+                }
+            },
+            Err(e) => bad(e),
+        },
+        "authority" => {
+            let budget = match v["budget"].as_str().map(str::to_string).or_else(|| v["budget"].as_u64().map(|n| n.to_string())) {
+                Some(x) => match anp_authz::parse_amount_minor(&x) {
+                    Ok(m) => Some(m),
+                    Err(e) => return bad(e),
+                },
+                None => None,
+            };
+            match b.set_authority(v["token"].as_str(), budget) {
+                Ok(()) => Json(b.state()["ledger"].clone()).into_response(),
+                Err(e) => bad(e),
+            }
+        }
+        "audit" => match s("acceptance") {
+            Ok(a) => match b.audit(&a) {
+                Ok(r) => Json(r).into_response(),
+                Err(e) => bad(e),
+            },
+            Err(e) => bad(e),
+        },
+        other => (StatusCode::NOT_FOUND, format!("no action {other}: request, accept, authority or audit\n")).into_response(),
     }
 }
 

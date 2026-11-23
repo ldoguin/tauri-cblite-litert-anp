@@ -151,6 +151,9 @@ pub struct Hub {
     group_member: Mutex<Option<Arc<crate::group_member::GroupMember>>>,
     /// The simulated cold room this node runs, if it is a store's node (see `coldstore`).
     store_sim: Mutex<Option<Arc<crate::coldstore::ColdStoreSim>>>,
+    /// The quote desks (see `quotes`): a counterparty's, the store's.
+    quote_seller: Mutex<Option<Arc<crate::quotes::QuoteSeller>>>,
+    quote_buyer: Mutex<Option<Arc<crate::quotes::QuoteBuyer>>>,
 }
 
 impl Hub {
@@ -185,6 +188,8 @@ impl Hub {
             direct_messaging: Mutex::new(None),
             group_member: Mutex::new(None),
             store_sim: Mutex::new(None),
+            quote_seller: Mutex::new(None),
+            quote_buyer: Mutex::new(None),
         });
 
         // Task changes (local or replicated) -> broadcast for waiters/streams.
@@ -311,6 +316,32 @@ impl Hub {
 
     pub fn store_sim(&self) -> Option<Arc<crate::coldstore::ColdStoreSim>> {
         self.store_sim.lock().unwrap().clone()
+    }
+
+    /// Answer quote requests as a counterparty (needs direct messaging, set first).
+    pub fn set_quote_seller(&self, s: crate::quotes::QuoteSeller) -> Result<(), String> {
+        let dm = self.direct_messaging().ok_or("a quote desk needs direct messaging (--direct-messaging)")?;
+        let s = Arc::new(s);
+        dm.set_seller(s.clone());
+        *self.quote_seller.lock().unwrap() = Some(s);
+        Ok(())
+    }
+
+    /// Buy through the quote protocol (built on direct messaging, set first).
+    pub fn set_quote_buyer(&self, b: crate::quotes::QuoteBuyer) {
+        let b = Arc::new(b);
+        if tokio::runtime::Handle::try_current().is_ok() {
+            b.start(); // follows the answers
+        }
+        *self.quote_buyer.lock().unwrap() = Some(b);
+    }
+
+    pub fn quote_seller(&self) -> Option<Arc<crate::quotes::QuoteSeller>> {
+        self.quote_seller.lock().unwrap().clone()
+    }
+
+    pub fn quote_buyer(&self) -> Option<Arc<crate::quotes::QuoteBuyer>> {
+        self.quote_buyer.lock().unwrap().clone()
     }
 
     pub fn note_http_refusal(&self, why: &str) {

@@ -1,0 +1,9 @@
+[package]
+name = "anp-counterparty"
+version = "0.1.0"
+edition = "2021"
+description = "Rule-based counterparties for the cold-stock rescue scenario: carriers, warehouses, a food bank, an insurer and a supplier, each deciding on a quote request by its own rules"
+license = "MIT"
+
+[dependencies]
+serde_json = "1"

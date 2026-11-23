@@ -188,6 +188,8 @@ pub struct DirectMessaging {
     /// Per peer DID: how many of our questions still await an answer.
     awaiting: Mutex<HashMap<String, u64>>,
     awaiting_file: PathBuf,
+    /// A counterparty's quote desk: quote-protocol messages go to it instead of the agent (see `quotes`).
+    seller: Mutex<Option<Arc<crate::quotes::QuoteSeller>>>,
 }
 
 fn skey(did: &str, device: &str) -> String {
@@ -248,6 +250,7 @@ impl DirectMessaging {
         let awaiting: HashMap<String, u64> =
             load("direct-awaiting.json")?.and_then(|v| v.as_object().cloned()).map(|o| o.into_iter().filter_map(|(k, v)| v.as_u64().map(|n| (k, n))).collect()).unwrap_or_default();
         Ok(DirectMessaging {
+            seller: Mutex::new(None),
             awaiting: Mutex::new(awaiting),
             awaiting_file: dir.join("direct-awaiting.json"),
             log: Mutex::new(log),
@@ -374,6 +377,16 @@ impl DirectMessaging {
         v.sort();
         v.dedup();
         v
+    }
+
+    /// Answer quote-protocol messages with this desk rather than the agent.
+    pub fn set_seller(&self, s: Arc<crate::quotes::QuoteSeller>) {
+        *self.seller.lock().unwrap() = Some(s);
+    }
+
+    /// The verified DID document of a peer (given, or resolved from a trusted domain).
+    pub fn peer_document(&self, did: &str) -> Option<anp_did::Verified> {
+        self.peer(did).map(|p| p.doc)
     }
 
     /// A peer: one we were given, or one resolved from a trusted domain.
@@ -613,6 +626,23 @@ impl DirectMessaging {
 
     /// Run the message through the agent and send its answer back to the peer, sealed into the session.
     async fn deliver(self: Arc<Self>, hub: Arc<Hub>, key: String, in_id: String, plaintext: Value) {
+        // a quote-protocol message for a counterparty's desk: it answers with a signed message, the agent is not involved
+        let seller = self.seller.lock().unwrap().clone();
+        if let (Some(desk), Some(msg)) = (seller, crate::quotes::quote_message(&plaintext)) {
+            let peer = self.sessions.lock().unwrap().get(&key).and_then(|s| self.peer(&s.binding.peer_did));
+            let Some(peer) = peer else { return };
+            match desk.handle(&peer.doc, msg) {
+                Ok(answer) => {
+                    let id = answer["id"].as_str().unwrap_or("answer").to_string();
+                    let sent = plaintext_of(&id, None, Some(&answer)).and_then(|p| self.seal_and_queue(&key, &p, false));
+                    if let Err(e) = sent {
+                        log::warn!("quote desk: cannot send the answer to {in_id}: {e}");
+                    }
+                }
+                Err(e) => log::warn!("quote desk: {in_id} not answered: {e}"),
+            }
+            return;
+        }
         // a text, or a structured payload (a quote, an acceptance) handed over as its JSON
         let text = plaintext["text"]
             .as_str()

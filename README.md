@@ -14,7 +14,7 @@ common/crates/a2a-core      the shared A2A task layer
 common/scripts              shared script helpers
 a2a/crates                  a2a-authz, a2a-cblite, a2a-node
 a2a/src-tauri  a2a/scripts  a2a/docs
-anp/crates                  anp-did, anp-cblite, anp-node, ... (16 crates)
+anp/crates                  anp-did, anp-cblite, anp-node, ... (17 crates)
 anp/src-tauri  anp/scripts  anp/testdata  anp/xtask
 ```
 

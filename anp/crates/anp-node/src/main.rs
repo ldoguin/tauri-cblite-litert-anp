@@ -74,6 +74,14 @@ struct Args {
     group_member: Option<String>,
     /// Run the simulated cold room of store 0412 at this many simulated minutes per second (0: only when advanced).
     store_sim: Option<u32>,
+    /// Answer quote requests as this built-in counterparty, accepting buyers' tokens from these authorities.
+    counterparty: Option<String>,
+    buyer_roots: Vec<String>,
+    /// Buy through the quote protocol with this spending token, issued by this authority, within this budget (euros), for this site.
+    spend_token: Option<PathBuf>,
+    spend_root: Option<String>,
+    budget: Option<String>,
+    site: Option<String>,
     /// Run the group host without `--require-auth`: anyone who can reach it can collect any device's notifications.
     group_open_mailboxes: bool,
     /// DIDs this node trusts (DID mode), repeatable.
@@ -134,6 +142,12 @@ fn parse_args() -> Result<Args, String> {
         group_host: false,
         group_member: None,
         store_sim: None,
+        counterparty: None,
+        buyer_roots: vec![],
+        spend_token: None,
+        spend_root: None,
+        budget: None,
+        site: None,
         group_open_mailboxes: false,
         trust_dids: vec![],
         print_did: false,
@@ -200,7 +214,13 @@ fn parse_args() -> Result<Args, String> {
             "--handle" => a.handles.push(v()?),
         "--meta-protocol" => a.meta_protocols.push(v()?),
         "--group-host" | "--p6-host" => a.group_host = true,
-        "--store-sim" => a.store_sim = Some(v()?.parse().map_err(|e| format!("--store-sim wants simulated minutes per second (0 = manual): {e}"))?),
+        "--counterparty" => a.counterparty = Some(v()?),
+        "--buyer-root" => a.buyer_roots.push(v()?),
+        "--spend-token" => a.spend_token = Some(PathBuf::from(v()?)),
+        "--spend-root" => a.spend_root = Some(v()?),
+        "--budget" => a.budget = Some(v()?),
+        "--site" => a.site = Some(v()?),
+        "--store-sim" =>a.store_sim = Some(v()?.parse().map_err(|e| format!("--store-sim wants simulated minutes per second (0 = manual): {e}"))?),
         "--group-member" => {
                 a.group_member = Some(v()?);
                 a.secure = true;
@@ -226,7 +246,7 @@ fn parse_args() -> Result<Args, String> {
                 a.secure = true;
             }
             "-h" | "--help" => {
-                return Err("usage: anp-node [--name N] [--id ID] [--data DIR] [--http-port P] [--p2p-port P] [--connect ws://host:port/a2a]...\n       LLM agent (build with --features litert, Linux/macOS): [--model FILE.litertlm] [--role R] [--persona TEXT] [--max-tokens N]\n       Security: [--secure] [--trust trust.json] [--trust-peer name=PUBKEY]... [--print-pubkey]\n       Biscuit:  [--root-key ROOT_PUBKEY --token FILE [--revoked FILE]]  (tokens come from anp-admin)\n       Built-in agent: [--agent echo|reviewer|claims|writer]\n       DID (ANP): [--did-host HOST[:PORT] [--trust-did DID]... [--print-did] [--e2ee] [--handle LOCAL]... [--meta-protocol NAME[=FILE]]... [--group-host [--group-open-mailboxes]] [--group-member HOST_URL]]\n       Cold-stock scenario: [--store-sim MIN_PER_SEC]  (simulated store 0412; its temperature log is signed and replicated; needs a secure mode)\n       Domains: [--trust-domain HOST[:PORT]]... [--resolver-roots CA.pem] [--resolver-allow-private]  (DIDs of a trusted domain are fetched over HTTPS)\n       Direct messages (ANP-09 P5): [--direct-messaging [--direct-peer DID=URL]...]  (needs --e2ee; peers are the --allow-caller documents)\n       ANP-02: [--require-auth [--public-origin https://HOST[:PORT]] [--allow-caller DID_DOC.json]... [--allow-legacy-auth]]\n       Transport/at rest: [--tls] [--pin-cert PEM] [--admit] [--db-key-env VAR]".into())
+                return Err("usage: anp-node [--name N] [--id ID] [--data DIR] [--http-port P] [--p2p-port P] [--connect ws://host:port/a2a]...\n       LLM agent (build with --features litert, Linux/macOS): [--model FILE.litertlm] [--role R] [--persona TEXT] [--max-tokens N]\n       Security: [--secure] [--trust trust.json] [--trust-peer name=PUBKEY]... [--print-pubkey]\n       Biscuit:  [--root-key ROOT_PUBKEY --token FILE [--revoked FILE]]  (tokens come from anp-admin)\n       Built-in agent: [--agent echo|reviewer|claims|writer]\n       DID (ANP): [--did-host HOST[:PORT] [--trust-did DID]... [--print-did] [--e2ee] [--handle LOCAL]... [--meta-protocol NAME[=FILE]]... [--group-host [--group-open-mailboxes]] [--group-member HOST_URL]]\n       Cold-stock scenario: [--store-sim MIN_PER_SEC]  (simulated store 0412; its temperature log is signed and replicated; needs a secure mode)\n       Quotes (need --direct-messaging): [--counterparty frostline|polar|coldchain|rungis-cold|orly-freeze|foodbank|insurer|supplier --buyer-root ROOT_PUBKEY...]\n                                         [--spend-token FILE --spend-root ROOT_PUBKEY --budget EUROS [--site NAME]]\n       Domains: [--trust-domain HOST[:PORT]]... [--resolver-roots CA.pem] [--resolver-allow-private]  (DIDs of a trusted domain are fetched over HTTPS)\n       Direct messages (ANP-09 P5): [--direct-messaging [--direct-peer DID=URL]...]  (needs --e2ee; peers are the --allow-caller documents)\n       ANP-02: [--require-auth [--public-origin https://HOST[:PORT]] [--allow-caller DID_DOC.json]... [--allow-legacy-auth]]\n       Transport/at rest: [--tls] [--pin-cert PEM] [--admit] [--db-key-env VAR]".into())
             }
             other => return Err(format!("unknown argument {other}")),
         }
@@ -533,6 +553,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             endpoints.insert(did.to_string(), url.to_string());
         }
         hub.set_direct_messaging(anp_cblite::direct_messaging::DirectMessaging::new(t, &args.data, peer_docs.clone(), endpoints, domain_trust.clone())?);
+    }
+    if let Some(profile) = &args.counterparty {
+        let t = trust.clone().ok_or("--counterparty needs DID mode (--did-host)")?;
+        hub.set_quote_seller(anp_cblite::quotes::QuoteSeller::new(t, profile, &args.buyer_roots, &args.data)?)?;
+    }
+    if let Some(f) = &args.spend_token {
+        let t = trust.clone().ok_or("--spend-token needs DID mode (--did-host)")?;
+        let dm = hub.direct_messaging().ok_or("--spend-token needs direct messaging (--direct-messaging)")?;
+        let token = std::fs::read_to_string(f).map_err(|e| format!("{}: {e}", f.display()))?;
+        let root = args.spend_root.as_deref().ok_or("--spend-token needs the authority's key: --spend-root")?;
+        let budget = anp_authz::parse_amount_minor(args.budget.as_deref().ok_or("--spend-token needs a total: --budget EUROS")?)?;
+        let site = args.site.clone().unwrap_or_else(|| args.id.clone());
+        hub.set_quote_buyer(anp_cblite::quotes::QuoteBuyer::new(t, dm, &token, root, budget, &site, &args.data)?);
     }
     if let Some(speed) = args.store_sim {
         if trust.is_none() {

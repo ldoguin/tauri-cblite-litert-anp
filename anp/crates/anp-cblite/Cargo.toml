@@ -41,5 +41,7 @@ anp-group-host = { path = "../anp-group-host" }
 anp-group = { path = "../anp-group" }
 anp-group-mls = { path = "../anp-group-mls" }
 anp-coldstore = { path = "../anp-coldstore" }
+anp-counterparty = { path = "../anp-counterparty" }
+anp-quote = { path = "../anp-quote" }
 ureq = { version = "2", default-features = false }
 
