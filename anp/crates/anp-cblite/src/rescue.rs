@@ -24,6 +24,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use crate::coldstore::ColdStoreSim;
+use crate::docs::{Coll, Docs};
 use crate::group_member::GroupMember;
 use crate::quotes::QuoteBuyer;
 
@@ -189,6 +190,27 @@ fn vet(p: &Proposal, carriers: &[(Company, Value)], warehouses: &[(Company, Valu
     if broken.is_empty() { Ok(()) } else { Err(broken) }
 }
 
+/// Every rescue record this node holds, its own and replicated ones, as verified (a document that does not verify is not shown),
+/// newest first: what a head office reads. `signedBy` says who signed, in place of the whole signature block.
+pub async fn records(docs: &Docs) -> Result<Vec<Value>, String> {
+    let mut out: Vec<Value> = docs
+        .list(Coll::Rescue)
+        .await?
+        .into_iter()
+        .map(|(id, mut v)| {
+            v["id"] = json!(id);
+            let signed = json!({ "author": v["trust"]["author"], "did": v["trust"]["did"], "seq": v["trust"]["seq"] });
+            if let Some(o) = v.as_object_mut() {
+                o.remove("trust");
+            }
+            v["signedBy"] = signed;
+            v
+        })
+        .collect();
+    out.sort_by(|a, b| b["started"].as_str().cmp(&a["started"].as_str()));
+    Ok(out)
+}
+
 /// An offer the agent means to accept.
 #[derive(Debug, Clone)]
 struct Pick {
@@ -201,6 +223,9 @@ struct Pick {
 }
 
 struct State {
+    /// This run's name, in the id of its record (`<node>::<run>`); empty until the first run.
+    run: String,
+    started: String,
     phase: String,
     log: Vec<Value>,
     plan: Vec<Pick>,
@@ -226,6 +251,10 @@ pub struct Rescue {
     /// An on-device model that proposes the carrier and the cold storage; the rules decide whether to follow it.
     advisor: Mutex<Option<Arc<dyn Advisor>>>,
     decided: tokio::sync::Notify,
+    /// The run's state changed: its record is written again (see [`Rescue::persist`]).
+    dirty: tokio::sync::Notify,
+    /// One write of the record at a time, so the signing sequence only goes forward.
+    writing: tokio::sync::Mutex<()>,
 }
 
 impl Rescue {
@@ -237,11 +266,13 @@ impl Rescue {
             store,
             buyer,
             group,
-            state: Mutex::new(State { phase: "idle".into(), log: vec![], plan: vec![], approval: None, group: None, summary: None }),
+            state: Mutex::new(State { run: String::new(), started: String::new(), phase: "idle".into(), log: vec![], plan: vec![], approval: None, group: None, summary: None }),
             decision: Mutex::new(None),
             pace_ms: std::sync::atomic::AtomicU64::new(0),
             advisor: Mutex::new(None),
             decided: tokio::sync::Notify::new(),
+            dirty: tokio::sync::Notify::new(),
+            writing: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -258,6 +289,50 @@ impl Rescue {
 
     fn phase(&self, p: &str) {
         self.state.lock().unwrap().phase = p.into();
+        self.dirty.notify_one();
+    }
+
+    /// The run as one signed document in the replicated `rescue` collection, `<node>::<run>`: the phase, the log with the rule behind each
+    /// decision, the plan, the approval, the confirmed deals and the ledger. Written only by this node, again at every step, so a head
+    /// office that was cut off finds the whole run when the link returns.
+    async fn persist(&self) -> bool {
+        let _one = self.writing.lock().await;
+        let (id, body, terminal) = {
+            let s = self.state.lock().unwrap();
+            if s.run.is_empty() {
+                return true;
+            }
+            let buyer = self.buyer.state();
+            let deals: Vec<Value> = buyer["acceptances"]
+                .as_object()
+                .into_iter()
+                .flatten()
+                .filter(|(_, a)| a["status"] == "confirmed")
+                .map(|(id, a)| json!({ "acceptance": id, "status": a["status"], "answer": a["answer"] }))
+                .collect();
+            let node = self.store.node().to_string();
+            let body = json!({
+                "node": node, "run": s.run, "site": buyer["site"], "started": s.started,
+                "phase": s.phase, "clock": self.store.state()["clock"], "log": s.log, "approval": s.approval, "group": s.group, "summary": s.summary,
+                "plan": s.plan.iter().map(|p| json!({ "company": p.company, "role": p.role, "category": p.category, "pallets": p.pallets, "amountMinor": p.amount_minor, "quote": p.quote_id })).collect::<Vec<_>>(),
+                "deals": deals, "ledger": buyer["ledger"],
+            });
+            (format!("{node}::{}", s.run), body, matches!(s.phase.as_str(), "done" | "failed" | "declined"))
+        };
+        if let Err(e) = self.store.docs().put(Coll::Rescue, &id, body).await {
+            log::warn!("could not write the rescue record {id}: {e}");
+        }
+        terminal
+    }
+
+    /// Write the run's record whenever it changes, until the run has ended (its last state is written first).
+    async fn keep_record(self: Arc<Self>) {
+        loop {
+            self.dirty.notified().await;
+            if self.persist().await {
+                return;
+            }
+        }
     }
 
     /// Log a step: `step` is the phase it belongs to, `rule` (when there is one) the rule that decided it.
@@ -266,6 +341,8 @@ impl Rescue {
         let mut s = self.state.lock().unwrap();
         let clock = self.store.state()["clock"].clone();
         s.log.push(json!({ "step": step, "text": text, "rule": rule, "data": data, "clock": clock, "at": chrono::Utc::now().format("%H:%M:%S").to_string() }));
+        drop(s);
+        self.dirty.notify_one();
     }
 
     fn name_of(&self, did: &str) -> String {
@@ -367,9 +444,20 @@ impl Rescue {
             if !matches!(s.phase.as_str(), "idle" | "done" | "failed" | "declined") {
                 return Err(format!("a rescue is already under way ({})", s.phase));
             }
-            *s = State { phase: "starting".into(), log: vec![], plan: vec![], approval: None, group: None, summary: None };
+            *s = State {
+                run: uuid::Uuid::new_v4().simple().to_string()[..8].to_string(),
+                started: chrono::Utc::now().to_rfc3339(),
+                phase: "starting".into(),
+                log: vec![],
+                plan: vec![],
+                approval: None,
+                group: None,
+                summary: None,
+            };
         }
         *self.decision.lock().unwrap() = None;
+        tokio::spawn(self.clone().keep_record());
+        self.dirty.notify_one();
         let me = self.clone();
         tokio::spawn(async move {
             if let Err(e) = me.run().await {

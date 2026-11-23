@@ -83,7 +83,40 @@ pub fn run() -> Result<i32, String> {
     c.check("the retailer's authority gives the store €6,000 per commitment, for store 0412", night.token_issued.0 == 0, &night.token_issued.1);
     let (mut store, mut nodes, sellers) = (night.store, night.others, night.sellers);
     c.check("the store's agent is idle, with eight companies in its directory", rescue()["phase"] == "idle" && rescue()["directory"].as_array().map_or(0, |d| d.len()) == 8, rescue().to_string());
+
+    println!("The head office, cut off for the night");
+    c.check(
+        "the head office is connected: it holds the store's temperature logs",
+        poll(60, 500, || get_json(&format!("http://127.0.0.1:{HQ}/telemetry"))["logs"].as_array().map_or(0, |l| l.len()) >= 4),
+        get_json(&format!("http://127.0.0.1:{HQ}/telemetry")).to_string(),
+    );
+    c.check("it holds no rescue record yet", hq_records().is_empty(), Value::Array(hq_records()).to_string());
+    c.check("the link to the store is cut before the rescue starts", hq_link(false) == 200, "");
+    sleep(2);
+
     play(&mut c, &sellers);
+    let r = rescue();
+
+    println!("The store's record of the night, at the head office");
+    let own = get_json(&format!("http://127.0.0.1:{STORE}/rescues"))["records"].as_array().cloned().unwrap_or_default();
+    c.check("the store wrote one record of the run, and it ended: done", own.len() == 1 && own[0]["phase"] == "done", Value::Array(own.clone()).to_string());
+    sleep(3);
+    c.check("the head office, still cut off, holds no record", hq_records().is_empty(), Value::Array(hq_records()).to_string());
+    c.check("the link comes back", hq_link(true) == 200, "");
+    let log_len = r["log"].as_array().map_or(0, |l| l.len());
+    let caught_up = poll(120, 500, || hq_records().first().map_or(false, |x| x["phase"] == "done" && x["log"].as_array().map_or(0, |l| l.len()) == log_len));
+    let rec = hq_records().first().cloned().unwrap_or(Value::Null);
+    c.check("the head office catches up: the finished record arrives whole", caught_up, rec.to_string());
+    c.check("...signed by the store, verified on arrival", rec["signedBy"]["author"] == "store" && rec["signedBy"]["did"].as_str().map_or(false, |d| d.starts_with("did:wba:")), rec["signedBy"].to_string());
+    c.check("...the record is the agent's own: the same run, the same site", rec["run"] == own[0]["run"] && rec["site"] == "store-0412" && rec["id"] == json!(format!("store::{}", own[0]["run"].as_str().unwrap_or(""))), rec["id"].to_string());
+    c.check("...with the log, every line with the rule behind a decision", rec["log"] == r["log"], "");
+    c.check("...the plan: what was bought, from whom, for how much", rec["plan"] == r["plan"] && rec["plan"].as_array().map_or(0, |p| p.len()) == 6, rec["plan"].to_string());
+    c.check("...the six confirmed deals", rec["deals"].as_array().map_or(0, |d| d.len()) == 6 && rec["deals"].as_array().unwrap().iter().all(|d| d["status"] == "confirmed"), rec["deals"].to_string());
+    c.check("...the duty manager's approval", rec["approval"].is_object() || rec["approval"].is_string() || rec["approval"].is_boolean(), rec["approval"].to_string());
+    c.check("...the summary and the ledger", rec["summary"]["confirmed"] == 6 && rec["ledger"].is_object(), format!("{} {}", rec["summary"], rec["ledger"]));
+    c.check("nothing was refused at either end", rejections(STORE).is_empty() && rejections(HQ).is_empty(), format!("{:?} {:?}", rejections(STORE), rejections(HQ)));
+    let forged = ureq::get(&format!("http://127.0.0.1:{HQ}/rescues")).set("x-forwarded-for", "203.0.113.7").call();
+    c.check("the records are for this machine's operator only: a proxied request is refused", matches!(forged, Err(ureq::Error::Status(403, _))), "");
     store.kill();
     for n in &mut nodes {
         n.kill();
@@ -107,7 +140,7 @@ pub const STORE_PORT: u16 = STORE;
 /// Bring up the night's ten nodes: the retailer's authority and the store's spending token (€6,000 per commitment), eight companies on
 /// their own domains, a group host, and the store with its cold room (clock stopped), buying desk and agent.
 pub fn bring_up(work: &Path) -> Result<Night, String> {
-    println!("Ten nodes: the store, eight companies, a group host");
+    println!("Eleven nodes: the store, eight companies, a group host, the head office");
     let root = root_key(work, "retailer");
     let work = work.to_path_buf();
     let (store_did, store_doc) = document(&work, "store", STORE)?;
@@ -139,8 +172,11 @@ pub fn bring_up(work: &Path) -> Result<Night, String> {
         let extra = [base(name, *port), peer(&store_doc, &store_did, STORE), strs(&["--counterparty", name, "--buyer-root", &root, "--agent", "echo"])].concat();
         nodes.push(Node::start(&work, name, name, *port, &extra));
     }
+    // the head office replicates the store's signed records (peer to peer, over TLS, admitted by DID): the store knows its DID
+    let hq_did = did_for(&work, "hq", "hq.test", "hq");
     let mut store_args = [
         base("store", STORE),
+        strs(&["--tls", "--admit", "--trust-did", &hq_did]),
         strs(&["--store-sim", "0", "--spend-token", &token.display().to_string(), "--spend-root", &root, "--budget", "6000", "--site", "store-0412", "--rescue", &dir_file.display().to_string()]),
     ]
     .concat();
@@ -148,7 +184,25 @@ pub fn bring_up(work: &Path) -> Result<Night, String> {
         store_args.extend(peer(doc, did, *port));
     }
     let store = Node::start(&work, "store", "store", STORE, &store_args);
+    let p2p = store.p2p_port().ok_or("the store printed no P2P port")?;
+    let hq_args = [
+        strs(&["--did-host", "hq.test", "--tls", "--admit", "--trust-did", &store_did]),
+        strs(&["--connect", &format!("wss://127.0.0.1:{p2p}/a2a"), "--pin-cert", &work.join("store").join("tls.cert.pem").display().to_string()]),
+    ]
+    .concat();
+    nodes.push(Node::start(&work, "hq", "hq", HQ, &hq_args));
     Ok(Night { store, others: nodes, sellers, token_issued })
+}
+
+/// The head office's port: it holds a replica of what the store signs, and sends the store nothing.
+pub const HQ: u16 = 19112;
+
+fn hq_records() -> Vec<Value> {
+    get_json(&format!("http://127.0.0.1:{HQ}/rescues"))["records"].as_array().cloned().unwrap_or_default()
+}
+
+fn hq_link(up: bool) -> u16 {
+    post_json(&format!("http://127.0.0.1:{HQ}/link"), &json!({ "up": up }).to_string()).0
 }
 
 /// The search agent's port (plain HTTP JSON-RPC at `/`).

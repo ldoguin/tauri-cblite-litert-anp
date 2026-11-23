@@ -10,6 +10,7 @@
 //! right("agents", "own");              // may publish its own agent card
 //! right("tasks",  "own");              // may write the state of tasks it runs
 //! right("telemetry", "own");           // may publish its own sensor readings
+//! right("rescue", "own");              // may publish its own rescue records
 //! right("inbox",  "branch-1");         // may send commands addressed to branch-1 ("*" = anyone)
 //! check if time($t), $t < 2026-12-01T00:00:00Z;   // expiry
 //! ```
@@ -179,7 +180,7 @@ impl Authority {
             }
         }
         let mut src = format!(
-            "node(\"{}\");\nnode_key(\"{}\");\nright(\"agents\", \"own\");\nright(\"tasks\", \"own\");\nright(\"telemetry\", \"own\");\n",
+            "node(\"{}\");\nnode_key(\"{}\");\nright(\"agents\", \"own\");\nright(\"tasks\", \"own\");\nright(\"telemetry\", \"own\");\nright(\"rescue\", \"own\");\n",
             grant.node, grant.node_key_b64
         );
         for t in &grant.inbox_targets {

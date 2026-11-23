@@ -48,6 +48,14 @@ impl ColdStoreSim {
         ColdStoreSim { node: node.to_string(), docs, speed, store: Mutex::new(store), readings: Mutex::new(readings), busy: tokio::sync::Mutex::new(()) }
     }
 
+    /// This node's name, and its replicated store (the rescue agent writes its records there).
+    pub fn node(&self) -> &str {
+        &self.node
+    }
+    pub fn docs(&self) -> &Docs {
+        &self.docs
+    }
+
     /// Publish the first readings, then let the clock run (if it runs on its own).
     pub fn start(self: &Arc<Self>) {
         let me = self.clone();

@@ -472,7 +472,7 @@ cargo build -p anp-node -p anp-authz -p anp-search
 cargo xtask cold-rescue                       # then open http://127.0.0.1:19102/demo/rescue; Enter stops the ten nodes
                                               # http://127.0.0.1:19102/demo/rescue?autoplay=1 plays the night with captions
 cargo xtask cold-rescue --record night.mp4    # films the autoplay with explainers and intro/outro cards (Node 22+, Chrome or Edge, ffmpeg)
-cargo xtask e2e-rescue                        # the same night, checked: 30 checks
+cargo xtask e2e-rescue                        # the same night, and a head office replicating the store's records: 44 checks
 cargo xtask e2e-discovery                     # the same night, with the companies found through a search agent: 39 checks
 ```
 
@@ -487,9 +487,16 @@ and real use start it with no pace. The recording tools (`scripts/video/record.m
 the rescue uses `rescue-intro.html`, `rescue-outro.html` and `rescue-explainers.js`. Like the rest of the project, the store and the companies
 are fictional and the agent plans by rules; the protocol, signatures and encryption are real.
 
-### The fleet: Couchbase Server and Sync Gateway (in progress)
+### The fleet: records, Couchbase Server and Sync Gateway (in progress)
 
-Inside the retailer, stores will sync with head office through Sync Gateway; between companies it stays ANP. `cargo xtask fleet-up`
+**Records (F1).** The store's agent writes each run as one signed document in the replicated `rescue` collection, `<node>::<run>`: the
+phase, the log with the rule behind each decision, the plan, the approval, the confirmed deals and the ledger. It is written again at every
+step, only ever by the store (a node may publish only `<its own name>::…`, and a token carries `right("rescue", "own")`). A head office that
+replicates with the store reads them, as verified, at `GET /rescues` (this machine's operator only, like `/telemetry`); one that was cut off
+finds the whole run when its link returns. `e2e-rescue` runs a head office as an eleventh node and cuts its link for the night.
+
+**Server and Sync Gateway (F2).** Inside the retailer, stores will sync with head office through Sync Gateway; between companies it stays
+ANP. `cargo xtask fleet-up`
 stands up the server side in a local k3d cluster: the Couchbase Autonomous Operator, one Server 8.0.2 node with bucket `fleet`, scope `a2a` and
 the node's collections, and Sync Gateway 4.1.2 with database `anp` (manifests in [`fleet/`](fleet), adapted from kubecondemo's
 `k8s-mobile-sync`). Needs docker, k3d, kubectl and helm.
@@ -521,7 +528,7 @@ cargo xtask e2e-direct                                                     # two
 cargo xtask e2e-group                                                      # three nodes as members of an encrypted group hosted by a fourth: 33 checks
 cargo xtask e2e-coldstore                                                  # the simulated store, its signed temperature log at a head office, a cut link: 27 checks
 cargo xtask e2e-quotes                                                     # the store buys from eight counterparty nodes with signed quotes, limits and an approval: 35 checks
-cargo xtask e2e-rescue                                                     # the store's agent runs the whole rescue on ten nodes, the duty manager approves: 30 checks
+cargo xtask e2e-rescue                                                     # the store's agent runs the whole rescue, the duty manager approves, a head office (cut off, then back) gets its record: 44 checks
 cargo xtask e2e-discovery                                                  # the same, the companies found through a search agent, every DID over HTTPS: 39 checks
 bash scripts/linux-model.sh MODEL.litertlm                                 # in WSL or on Linux: the night with an on-device model advising the agent (cargo xtask e2e-model)
 cargo xtask cold-rescue [--record OUT.mp4]                                 # the demo: the ten nodes and the control room (see "The cold-stock rescue demo")

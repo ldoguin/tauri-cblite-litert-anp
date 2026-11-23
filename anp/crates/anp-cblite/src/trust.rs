@@ -1199,6 +1199,10 @@ fn authorize(coll: Coll, id: &str, content: &Value, author: &str) -> Result<(), 
             field("node") == Some(author) && id.strip_prefix(author).map_or(false, |rest| rest.starts_with("::")),
             format!("'{author}' may only publish its own readings, not '{id}'"),
         ),
+        Coll::Rescue => ok(
+            field("node") == Some(author) && id.strip_prefix(author).map_or(false, |rest| rest.starts_with("::")),
+            format!("'{author}' may only publish its own rescue records, not '{id}'"),
+        ),
         Coll::Inbox => ok(
             field("from") == Some(author),
             format!("'{author}' cannot issue a command from '{}'", field("from").unwrap_or("?")),
@@ -2185,5 +2189,27 @@ mod tests {
         assert!(hq.verify(Coll::Telemetry, "store::frz-1", &doc).is_ok());
         doc["readings"][0]["tempC"] = json!(-20.0);
         assert!(hq.verify(Coll::Telemetry, "store::frz-1", &doc).is_err(), "a rewritten reading");
+    }
+
+    #[test]
+    fn only_a_node_writes_its_own_rescue_records() {
+        let record = |node: &str| json!({ "node": node, "run": "r1", "phase": "done", "log": [] });
+        assert!(authorize(Coll::Rescue, "store::r1", &record("store"), "store").is_ok());
+        assert!(authorize(Coll::Rescue, "store::r1", &record("store"), "hq").is_err(), "head office signing the store's record");
+        assert!(authorize(Coll::Rescue, "store::r1", &record("hq"), "hq").is_err(), "the id names the store");
+        assert!(authorize(Coll::Rescue, "storefront::r1", &record("store"), "store").is_err(), "a prefix is not the node");
+        // signed by the store, it holds at head office; a changed plan or log does not
+        let (store, hq) = (node("store", 1), node("hq", 2));
+        hq.enroll("store", &store.public_key()).unwrap();
+        let mut doc = record("store");
+        doc["plan"] = json!([{ "company": "Polar Express", "amountMinor": 120000 }]);
+        store.sign(Coll::Rescue, "store::r1", &mut doc);
+        assert!(hq.verify(Coll::Rescue, "store::r1", &doc).is_ok());
+        doc["plan"][0]["amountMinor"] = json!(1);
+        assert!(hq.verify(Coll::Rescue, "store::r1", &doc).is_err(), "a rewritten plan");
+        // a record cannot be moved to another collection under the same id
+        let mut t = record("store");
+        store.sign(Coll::Rescue, "store::frz-1", &mut t);
+        assert!(hq.verify(Coll::Telemetry, "store::frz-1", &t).is_err(), "the signature names the collection");
     }
 }

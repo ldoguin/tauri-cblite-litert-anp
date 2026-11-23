@@ -67,6 +67,7 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .route("/telemetry", get(telemetry_get))
         .route("/anp/quotes", get(quotes_get))
         .route("/anp/quotes/:action", post(quotes_post))
+        .route("/rescues", get(rescues_get))
         .route("/rescue", get(rescue_get))
         .route("/rescue/:action", post(rescue_post))
         .route("/anp/meta", post(meta_message))
@@ -262,6 +263,17 @@ async fn telemetry_get(State(hub): State<Arc<Hub>>, addr: Option<ConnectInfo<Soc
     }
     match crate::coldstore::telemetry(&hub.docs).await {
         Ok(v) => Json(json!({ "logs": v })).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}\n")).into_response(),
+    }
+}
+
+/// Every rescue record this node holds (its own and replicated), as verified, newest first.
+async fn rescues_get(State(hub): State<Arc<Hub>>, addr: Option<ConnectInfo<SocketAddr>>, headers: HeaderMap) -> Response {
+    if !local_caller(addr.as_ref(), &headers) {
+        return not_local();
+    }
+    match crate::rescue::records(&hub.docs).await {
+        Ok(v) => Json(json!({ "records": v })).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}\n")).into_response(),
     }
 }
