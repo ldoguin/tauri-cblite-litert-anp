@@ -1429,6 +1429,7 @@ mod tests {
             inbox_targets: targets.iter().map(|s| s.to_string()).collect(),
             expires: None,
             did: None,
+            spend: None,
         }
     }
 

@@ -5,7 +5,11 @@
 //! anp-admin root-keygen --out root.key                    # prints the root PUBLIC key
 //! anp-admin issue  --root root.key --node tablet-7 --node-dir ./tablet7 \
 //!                  --inbox-to branch-1,hq --days 30 [--did did:wba:...] --out tablet-7.token
+//! anp-admin issue  --root root.key --node store-0412 --key <base64> --days 1 \
+//!                  --spend-cap 6000 --currency EUR --spend-category transport,storage --spend-for store-0412
+//!                  # may commit its owner to at most 6,000.00 EUR per order, for transport or storage
 //! anp-admin attenuate --root-pub <PUBKEY> --token tablet-7.token --inbox-to hq --minutes 60
+//! anp-admin attenuate --root-pub <PUBKEY> --token store.token --spend-cap 1500 --spend-category transport
 //! anp-admin inspect   --root-pub <PUBKEY> --token tablet-7.token
 //! anp-admin revoke    --root root.key --token tablet-7.token --reason "tablet lost" --out revoke.json
 //!                     # then: curl -X POST --data @revoke.json http://<any node>/security/revocations
@@ -20,7 +24,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use anp_authz::{attenuate, inspect, parse_public_key, Attenuation, Authority, Grant};
+use anp_authz::{attenuate, inspect, parse_amount_minor, parse_public_key, Attenuation, Authority, Grant, Spend};
 
 fn main() {
     if let Err(e) = run() {
@@ -67,6 +71,22 @@ fn targets(v: &str) -> Vec<String> {
     v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
 }
 
+/// `--spend-cap 6000 --currency EUR --spend-category transport,storage [--spend-for store-0412]`
+fn spend(o: &HashMap<String, String>) -> Result<Option<Spend>, String> {
+    let Some(cap) = o.get("spend-cap") else {
+        if o.contains_key("spend-category") || o.contains_key("spend-for") || o.contains_key("currency") {
+            return Err("--spend-category, --spend-for and --currency go with --spend-cap".into());
+        }
+        return Ok(None);
+    };
+    Ok(Some(Spend {
+        currency: o.get("currency").cloned().unwrap_or_else(|| "EUR".into()),
+        cap_minor: parse_amount_minor(cap)?,
+        categories: targets(need(o, "spend-category")?),
+        on_behalf_of: o.get("spend-for").cloned(),
+    }))
+}
+
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(cmd) = args.first() else {
@@ -102,6 +122,7 @@ fn run() -> Result<(), String> {
                 inbox_targets: targets(o.get("inbox-to").map(String::as_str).unwrap_or("")),
                 expires: expiry(&o)?,
                 did: o.get("did").cloned(),
+                spend: spend(&o)?,
             })?;
             match o.get("out") {
                 Some(f) => {
@@ -117,7 +138,13 @@ fn run() -> Result<(), String> {
             let new = attenuate(
                 &token,
                 &root,
-                &Attenuation { expires: expiry(&o)?, inbox_targets: o.get("inbox-to").map(|v| targets(v)) },
+                &Attenuation {
+                    expires: expiry(&o)?,
+                    inbox_targets: o.get("inbox-to").map(|v| targets(v)),
+                    spend_cap_minor: o.get("spend-cap").map(|v| parse_amount_minor(v)).transpose()?,
+                    spend_categories: o.get("spend-category").map(|v| targets(v)),
+                    spend_for: o.get("spend-for").cloned(),
+                },
             )?;
             println!("{new}");
         }

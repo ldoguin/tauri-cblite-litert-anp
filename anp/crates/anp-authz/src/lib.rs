@@ -78,6 +78,59 @@ pub struct Grant {
     /// Bind the token to this `did:wba` identity: it then only works for a node that proves that DID (the DID's
     /// own key must equal `node_key`, so the token, the DID and the key all name the same holder).
     pub did: Option<String>,
+    /// What the holder may commit its principal to (an agent that buys on its owner's behalf); `None`: nothing.
+    pub spend: Option<Spend>,
+}
+
+/// Delegated spending authority, carried in the authority block of a token, so a counterparty can check any
+/// commitment the holder signs against it ([`authorize_commitment`]).
+///
+/// ```text
+/// spend_cap("EUR", 600000);          // at most 6,000.00 EUR per commitment, in minor units (cents)
+/// spend_category("transport");       // what it may buy (repeatable)
+/// spend_for("store-0412");           // the site it acts for ("*" = any)
+/// ```
+///
+/// The cap is per commitment: a counterparty sees one commitment, not the holder's other ones. A total over
+/// several commitments is the holder's own ledger to keep; the counterparty check bounds the damage of each.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Spend {
+    /// ISO 4217 code, e.g. `EUR`.
+    pub currency: String,
+    /// The largest single commitment, in the currency's minor units (cents for EUR).
+    pub cap_minor: u64,
+    /// The categories of purchase allowed, e.g. `transport`, `storage`. At least one.
+    pub categories: Vec<String>,
+    /// The site or account the holder acts for; `None` = any.
+    pub on_behalf_of: Option<String>,
+}
+
+fn currency_ok(s: &str) -> bool {
+    s.len() == 3 && s.bytes().all(|b| b.is_ascii_uppercase())
+}
+
+fn spend_facts(s: &Spend) -> Result<String, String> {
+    if !currency_ok(&s.currency) {
+        return Err(format!("currency '{}' must be a three-letter ISO 4217 code such as EUR", s.currency));
+    }
+    if s.cap_minor > i64::MAX as u64 {
+        return Err("spending cap too large".into());
+    }
+    if s.categories.is_empty() {
+        return Err("a spending grant names at least one category".into());
+    }
+    if let Some(bad) = s.categories.iter().find(|c| !ident_ok(c)) {
+        return Err(format!("category '{bad}' must be 1-64 characters of [A-Za-z0-9._:-]"));
+    }
+    if let Some(bad) = s.on_behalf_of.as_ref().filter(|w| !ident_ok(w)) {
+        return Err(format!("'{bad}' must be 1-64 characters of [A-Za-z0-9._:-]"));
+    }
+    let mut src = format!("spend_cap(\"{}\", {});\n", s.currency, s.cap_minor);
+    for c in &s.categories {
+        src.push_str(&format!("spend_category(\"{c}\");\n"));
+    }
+    src.push_str(&format!("spend_for(\"{}\");\n", s.on_behalf_of.as_deref().unwrap_or("*")));
+    Ok(src)
 }
 
 /// The administrator's root key pair. Keep the private half offline.
@@ -135,6 +188,9 @@ impl Authority {
             // A DID-bound token is useless to anyone who cannot prove the DID.
             src.push_str(&format!("did(\"{d}\");\ncheck if claimed_did($d), did($d);\n"));
         }
+        if let Some(s) = &grant.spend {
+            src.push_str(&spend_facts(s)?);
+        }
         if let Some(e) = grant.expires {
             src.push_str(&format!("check if time($t), $t < {};\n", rfc3339(e)));
         }
@@ -154,6 +210,12 @@ pub struct Attenuation {
     pub expires: Option<SystemTime>,
     /// Only these inbox targets stay allowed.
     pub inbox_targets: Option<Vec<String>>,
+    /// Commitments may be at most this much (minor units), whatever the token's own cap says.
+    pub spend_cap_minor: Option<u64>,
+    /// Only these categories of purchase stay allowed.
+    pub spend_categories: Option<Vec<String>>,
+    /// Only commitments for this site stay allowed.
+    pub spend_for: Option<String>,
 }
 
 /// Narrow `token_b64` by appending a block. Needs only the authority's *public*
@@ -172,6 +234,29 @@ pub fn attenuate(token_b64: &str, root: &PublicKey, a: &Attenuation) -> Result<S
         src.push_str(&format!(
             "check if collection($c), $c != \"inbox\" or collection(\"inbox\"), target($t), {{{set}}}.contains($t);\n"
         ));
+    }
+    // spending limits only constrain commitments ("commit"): documents and admission pass them by
+    if let Some(cap) = a.spend_cap_minor {
+        if cap > i64::MAX as u64 {
+            return Err("spending cap too large".into());
+        }
+        src.push_str(&format!("check if collection($c), $c != \"commit\" or commit_amount($a), $a <= {cap};\n"));
+    }
+    if let Some(cs) = &a.spend_categories {
+        if cs.is_empty() {
+            return Err("give at least one category to keep".into());
+        }
+        if let Some(bad) = cs.iter().find(|c| !ident_ok(c)) {
+            return Err(format!("category '{bad}' must be 1-64 characters of [A-Za-z0-9._:-]"));
+        }
+        let set = cs.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
+        src.push_str(&format!("check if collection($c), $c != \"commit\" or commit_category($k), {{{set}}}.contains($k);\n"));
+    }
+    if let Some(w) = &a.spend_for {
+        if !ident_ok(w) {
+            return Err(format!("'{w}' must be 1-64 characters of [A-Za-z0-9._:-]"));
+        }
+        src.push_str(&format!("check if collection($c), $c != \"commit\" or commit_for(\"{w}\");\n"));
     }
     if src.is_empty() {
         return Ok(token_b64.to_string());
@@ -253,6 +338,84 @@ pub fn authorize_with(token_b64: &str, root: &PublicKey, c: &Claim, did: Option<
     authorizer.authorize().map_err(|e| format!("token does not allow this: {e}"))?;
 
     Ok(Authorized { revocation_ids: token.revocation_identifiers().iter().map(|id| hex(id)).collect() })
+}
+
+// ── Commitments ─────────────────────────────────────────────────────────────
+
+/// A commitment the holder of a token signs on its principal's behalf (an order, an acceptance of a quote).
+#[derive(Debug, Clone, Copy)]
+pub struct Commitment<'a> {
+    /// Who signs it: the token's node name and the key its signature is checked with.
+    pub node: &'a str,
+    pub key_b64: &'a str,
+    /// The amount, in the currency's minor units (cents for EUR).
+    pub amount_minor: u64,
+    pub currency: &'a str,
+    /// What it buys, e.g. `transport`.
+    pub category: &'a str,
+    /// The site or account it is for.
+    pub on_behalf_of: &'a str,
+}
+
+/// May the holder of `token_b64` sign commitment `c`? The token must come from `root`, be unexpired, name the
+/// signer and its key (and, with `Some(did)`, be bound to that DID), carry a spending grant in the same currency
+/// whose cap is at least the amount, allow the category and the site, and pass every narrowing block added since.
+///
+/// This is what a counterparty runs before it accepts an order: the holder cannot talk it past the limit.
+/// Revocation is the caller's deny-list, as for documents ([`Authorized::revocation_ids`]).
+pub fn authorize_commitment(token_b64: &str, root: &PublicKey, c: &Commitment, did: Option<&str>) -> Result<Authorized, String> {
+    if did.map_or(false, |d| !did_ok(d)) {
+        return Err("malformed DID".into());
+    }
+    if !ident_ok(c.node) || !key_ok(c.key_b64) || !currency_ok(c.currency) || !ident_ok(c.category) || !ident_ok(c.on_behalf_of) {
+        return Err("malformed commitment".into());
+    }
+    if c.amount_minor > i64::MAX as u64 {
+        return Err("amount too large".into());
+    }
+    let token = Biscuit::from_base64(token_b64, *root).map_err(|e| format!("invalid token: {e}"))?;
+    let mut src = format!(
+        "claimed_node(\"{}\");\nclaimed_key(\"{}\");\ncollection(\"commit\");\ncommit_amount({});\ncommit_currency(\"{}\");\ncommit_category(\"{}\");\ncommit_for(\"{}\");\n",
+        c.node, c.key_b64, c.amount_minor, c.currency, c.category, c.on_behalf_of
+    );
+    if let Some(d) = did {
+        src.push_str(&format!("claimed_did(\"{d}\");\ncheck if did($d), claimed_did($d);\n"));
+    }
+    src.push_str(
+        r#"
+        allow if node($n), claimed_node($n), node_key($k), claimed_key($k),
+                 commit_currency($cur), spend_cap($cur, $cap), commit_amount($a), $a <= $cap,
+                 commit_category($cat), spend_category($cat),
+                 commit_for($s), spend_for($s);
+        allow if node($n), claimed_node($n), node_key($k), claimed_key($k),
+                 commit_currency($cur), spend_cap($cur, $cap), commit_amount($a), $a <= $cap,
+                 commit_category($cat), spend_category($cat),
+                 spend_for("*");
+        deny if true;
+        "#,
+    );
+    let limits = AuthorizerLimits { max_time: Duration::from_millis(100), ..Default::default() };
+    let mut authorizer = AuthorizerBuilder::new()
+        .set_limits(limits)
+        .time()
+        .code(&src)
+        .map_err(|e| format!("authorizer: {e}"))?
+        .build(&token)
+        .map_err(|e| format!("authorizer: {e}"))?;
+    authorizer.authorize().map_err(|e| format!("token does not allow this commitment: {e}"))?;
+    Ok(Authorized { revocation_ids: token.revocation_identifiers().iter().map(|id| hex(id)).collect() })
+}
+
+/// Parse an amount such as `7200`, `7200.5` or `7200.50` into minor units (two decimals).
+pub fn parse_amount_minor(v: &str) -> Result<u64, String> {
+    let v = v.trim();
+    let (whole, frac) = v.split_once('.').unwrap_or((v, ""));
+    if whole.is_empty() || !whole.bytes().all(|b| b.is_ascii_digit()) || frac.len() > 2 || !frac.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(format!("'{v}' is not an amount like 7200 or 7200.50"));
+    }
+    let w: u64 = whole.parse().map_err(|_| format!("'{v}' is too large"))?;
+    let f: u64 = format!("{frac:0<2}").parse().unwrap_or(0);
+    w.checked_mul(100).and_then(|x| x.checked_add(f)).filter(|x| *x <= i64::MAX as u64).ok_or_else(|| format!("'{v}' is too large"))
 }
 
 // ── Revocation ──────────────────────────────────────────────────────────────
@@ -353,7 +516,9 @@ pub fn admit_with(token_b64: &str, root: &PublicKey, node: &str, did: Option<&st
         return Err("malformed DID".into());
     }
     let token = Biscuit::from_base64(token_b64, *root).map_err(|e| format!("invalid token: {e}"))?;
-    let mut src = format!("claimed_node(\"{node}\");\n");
+    // `collection("admission")`: the checks a narrowing block adds for one kind of document (inbox targets,
+    // spending limits) are written "collection is not X, or ...", so they let an admission through
+    let mut src = format!("claimed_node(\"{node}\");\ncollection(\"admission\");\n");
     if let Some(d) = did {
         src.push_str(&format!("claimed_did(\"{d}\");\ncheck if did($d), claimed_did($d);\n"));
     }
@@ -389,6 +554,7 @@ mod tests {
             inbox_targets: targets.iter().map(|s| s.to_string()).collect(),
             expires: None,
             did: None,
+            spend: None,
         }
     }
 
@@ -630,5 +796,173 @@ mod tests {
         let t = did_token(&auth, Some(DID_A));
         assert!(authorize_with(&t, &auth.public_key(), &claim("alice", "tasks", None), Some("did:wba:x\"); allow if true; //")).is_err());
         assert!(admit_with(&t, &auth.public_key(), "alice", Some("not a did")).is_err());
+    }
+
+    // ── spending caps ───────────────────────────────────────────────────────────────────────────────────
+
+    fn spender(auth: &Authority, cap_minor: u64, site: Option<&str>) -> String {
+        let mut g = grant("store-0412", &["*"]);
+        g.spend = Some(Spend {
+            currency: "EUR".into(),
+            cap_minor,
+            categories: vec!["transport".into(), "storage".into()],
+            on_behalf_of: site.map(str::to_string),
+        });
+        auth.issue(&g).unwrap()
+    }
+
+    fn order<'a>(amount_minor: u64, category: &'a str, site: &'a str) -> Commitment<'a> {
+        Commitment { node: "store-0412", key_b64: KEY, amount_minor, currency: "EUR", category, on_behalf_of: site }
+    }
+
+    #[test]
+    fn a_commitment_up_to_the_cap_is_allowed_and_one_cent_more_is_not() {
+        let auth = Authority::generate();
+        let root = auth.public_key();
+        let t = spender(&auth, 600_000, Some("store-0412"));
+        authorize_commitment(&t, &root, &order(600_000, "transport", "store-0412"), None).unwrap();
+        authorize_commitment(&t, &root, &order(1, "storage", "store-0412"), None).unwrap();
+        assert!(authorize_commitment(&t, &root, &order(600_001, "transport", "store-0412"), None).is_err());
+    }
+
+    #[test]
+    fn category_site_and_currency_must_match_the_grant() {
+        let auth = Authority::generate();
+        let root = auth.public_key();
+        let t = spender(&auth, 600_000, Some("store-0412"));
+        assert!(authorize_commitment(&t, &root, &order(100, "catering", "store-0412"), None).is_err(), "category");
+        assert!(authorize_commitment(&t, &root, &order(100, "transport", "store-0999"), None).is_err(), "another site");
+        let usd = Commitment { currency: "USD", ..order(100, "transport", "store-0412") };
+        assert!(authorize_commitment(&t, &root, &usd, None).is_err(), "currency");
+        // a grant for any site
+        let any = spender(&auth, 600_000, None);
+        authorize_commitment(&any, &root, &order(100, "transport", "store-0999"), None).unwrap();
+    }
+
+    #[test]
+    fn a_token_without_a_spending_grant_commits_to_nothing() {
+        let auth = Authority::generate();
+        let t = auth.issue(&grant("store-0412", &["*"])).unwrap();
+        assert!(authorize_commitment(&t, &auth.public_key(), &order(1, "transport", "store-0412"), None).is_err());
+        assert!(authorize_commitment(&t, &auth.public_key(), &order(0, "transport", "store-0412"), None).is_err());
+    }
+
+    #[test]
+    fn the_signer_must_be_the_tokens_node_and_key() {
+        let auth = Authority::generate();
+        let root = auth.public_key();
+        let t = spender(&auth, 600_000, None);
+        let stolen = Commitment { key_b64: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", ..order(100, "transport", "s") };
+        assert!(authorize_commitment(&t, &root, &stolen, None).is_err(), "a stolen token with another key");
+        let other = Commitment { node: "mallory", ..order(100, "transport", "s") };
+        assert!(authorize_commitment(&t, &root, &other, None).is_err());
+        assert!(authorize_commitment(&t, &Authority::generate().public_key(), &order(100, "transport", "s"), None).is_err(), "another authority");
+    }
+
+    #[test]
+    fn expired_spending_tokens_are_refused() {
+        let auth = Authority::generate();
+        let mut g = grant("store-0412", &[]);
+        g.spend = Some(Spend { currency: "EUR".into(), cap_minor: 100, categories: vec!["transport".into()], on_behalf_of: None });
+        g.expires = Some(SystemTime::now() - Duration::from_secs(60));
+        let t = auth.issue(&g).unwrap();
+        assert!(authorize_commitment(&t, &auth.public_key(), &order(1, "transport", "s"), None).is_err());
+    }
+
+    #[test]
+    fn a_did_bound_spending_token_needs_that_did() {
+        let auth = Authority::generate();
+        let root = auth.public_key();
+        let mut g = grant("store-0412", &[]);
+        g.did = Some(DID_A.into());
+        g.spend = Some(Spend { currency: "EUR".into(), cap_minor: 100, categories: vec!["transport".into()], on_behalf_of: None });
+        let t = auth.issue(&g).unwrap();
+        authorize_commitment(&t, &root, &order(100, "transport", "s"), Some(DID_A)).unwrap();
+        assert!(authorize_commitment(&t, &root, &order(100, "transport", "s"), Some(DID_B)).is_err());
+        assert!(authorize_commitment(&t, &root, &order(100, "transport", "s"), None).is_err());
+    }
+
+    #[test]
+    fn spending_can_be_narrowed_offline_but_never_raised() {
+        let auth = Authority::generate();
+        let root = auth.public_key();
+        let t = spender(&auth, 600_000, None);
+        let low = attenuate(&t, &root, &Attenuation { spend_cap_minor: Some(150_000), ..Default::default() }).unwrap();
+        authorize_commitment(&low, &root, &order(150_000, "transport", "s"), None).unwrap();
+        assert!(authorize_commitment(&low, &root, &order(150_001, "transport", "s"), None).is_err());
+        // a later block with a higher number does not lift the lower one
+        let raised = attenuate(&low, &root, &Attenuation { spend_cap_minor: Some(900_000), ..Default::default() }).unwrap();
+        assert!(authorize_commitment(&raised, &root, &order(200_000, "transport", "s"), None).is_err());
+        // nor does narrowing past the authority's own cap raise it
+        let over = attenuate(&t, &root, &Attenuation { spend_cap_minor: Some(900_000), ..Default::default() }).unwrap();
+        assert!(authorize_commitment(&over, &root, &order(700_000, "transport", "s"), None).is_err());
+        // category and site
+        let only = attenuate(&t, &root, &Attenuation { spend_categories: Some(vec!["transport".into()]), spend_for: Some("store-0412".into()), ..Default::default() }).unwrap();
+        authorize_commitment(&only, &root, &order(100, "transport", "store-0412"), None).unwrap();
+        assert!(authorize_commitment(&only, &root, &order(100, "storage", "store-0412"), None).is_err());
+        assert!(authorize_commitment(&only, &root, &order(100, "transport", "store-0999"), None).is_err());
+        // a category the grant never had stays out even if a narrowing block names it
+        let sneaky = attenuate(&t, &root, &Attenuation { spend_categories: Some(vec!["catering".into()]), ..Default::default() }).unwrap();
+        assert!(authorize_commitment(&sneaky, &root, &order(100, "catering", "s"), None).is_err());
+    }
+
+    #[test]
+    fn spending_limits_leave_documents_and_admission_alone() {
+        let auth = Authority::generate();
+        let root = auth.public_key();
+        let t = spender(&auth, 600_000, Some("store-0412"));
+        let narrowed = attenuate(
+            &t,
+            &root,
+            &Attenuation { spend_cap_minor: Some(100), spend_categories: Some(vec!["transport".into()]), spend_for: Some("store-0412".into()), ..Default::default() },
+        )
+        .unwrap();
+        for tok in [&t, &narrowed] {
+            authorize(tok, &root, &claim("store-0412", "tasks", None)).unwrap();
+            authorize(tok, &root, &claim("store-0412", "inbox", Some("carrier-1"))).unwrap();
+            admit(tok, &root, "store-0412").unwrap();
+        }
+        // and a narrowed inbox no longer locks the holder out of admission
+        let inbox = attenuate(&t, &root, &Attenuation { inbox_targets: Some(vec!["hq".into()]), ..Default::default() }).unwrap();
+        admit(&inbox, &root, "store-0412").unwrap();
+        // the same revocation id covers the narrowed copy
+        let a = authorize_commitment(&narrowed, &root, &order(100, "transport", "store-0412"), None).unwrap();
+        assert_eq!(a.revocation_ids[0], auth.revoke(&t, "x").unwrap().revoked);
+        assert!(inspect(&t, &root).unwrap().contains("spend_cap"));
+    }
+
+    #[test]
+    fn bad_spending_input_is_refused_not_interpolated() {
+        let auth = Authority::generate();
+        let mut g = grant("s", &[]);
+        let ok = Spend { currency: "EUR".into(), cap_minor: 1, categories: vec!["transport".into()], on_behalf_of: None };
+        for bad in [
+            Spend { currency: "eur".into(), ..ok.clone() },
+            Spend { currency: "EU\"); allow if true; //".into(), ..ok.clone() },
+            Spend { categories: vec![], ..ok.clone() },
+            Spend { categories: vec!["x\"); allow if true; //".into()], ..ok.clone() },
+            Spend { on_behalf_of: Some("a b".into()), ..ok.clone() },
+            Spend { cap_minor: u64::MAX, ..ok.clone() },
+        ] {
+            g.spend = Some(bad);
+            assert!(auth.issue(&g).is_err());
+        }
+        g.spend = Some(ok);
+        let t = auth.issue(&g).unwrap();
+        let root = auth.public_key();
+        assert!(authorize_commitment(&t, &root, &Commitment { category: "t\"); allow if true; //", ..order(1, "transport", "s") }, None).is_err());
+        assert!(authorize_commitment(&t, &root, &Commitment { amount_minor: u64::MAX, ..order(1, "transport", "s") }, None).is_err());
+        assert!(attenuate(&t, &root, &Attenuation { spend_categories: Some(vec![]), ..Default::default() }).is_err());
+        assert!(attenuate(&t, &root, &Attenuation { spend_for: Some("x\")".into()), ..Default::default() }).is_err());
+    }
+
+    #[test]
+    fn amounts_parse_to_minor_units() {
+        assert_eq!(parse_amount_minor("7200").unwrap(), 720_000);
+        assert_eq!(parse_amount_minor("7200.5").unwrap(), 720_050);
+        assert_eq!(parse_amount_minor("0.07").unwrap(), 7);
+        for bad in ["", "-1", "1.234", "1,5", "abc", ".5", "99999999999999999999"] {
+            assert!(parse_amount_minor(bad).is_err(), "{bad}");
+        }
     }
 }

@@ -174,7 +174,7 @@ async fn a_revoked_authors_documents_stop_being_served_and_are_not_restored() {
     let node = |name: &str, seed: u8| {
         let t = Trust::new(name, SigningKey::from_bytes(&[seed; 32]));
         let token = auth
-            .issue(&Grant { node: name.into(), node_key_b64: t.public_key(), inbox_targets: vec!["*".into()], expires: None, did: None })
+            .issue(&Grant { node: name.into(), node_key_b64: t.public_key(), inbox_targets: vec!["*".into()], expires: None, did: None, spend: None })
             .unwrap();
         (t.with_biscuit(&auth.public_b64(), &token).unwrap(), token)
     };
