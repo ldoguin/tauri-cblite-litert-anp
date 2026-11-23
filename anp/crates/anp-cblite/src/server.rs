@@ -9,6 +9,9 @@
 //! * `POST /anp/direct/conversations`        (this machine only) send a direct message: `{"to": DID, "text": "..."}`
 //!                                           or `{"to": DID, "payload": {...}}`; `"new_session": true` forces a new key exchange
 //! * `GET  /anp/direct/conversations[?peer=DID]`  (this machine only) the conversations, or one of them
+//! * `GET  /anp/groups/member[?group=DID]`   (this machine only) the groups this node is in, or one group's messages and changes
+//! * `POST /anp/groups/member/{create|add|remove|send}`  (this machine only) `{"name"}`, `{"group", "member", "device_id"?}`,
+//!                                           `{"group", "text"}` or `{"group", "payload"}`
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -56,6 +59,8 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .route("/anp/direct", post(direct_messaging_rpc))
         .route("/anp/p5", post(direct_messaging_rpc)) // the old path, kept for peers that were given it
         .route("/anp/direct/conversations", get(conversations_get).post(conversations_post))
+        .route("/anp/groups/member", get(member_get))
+        .route("/anp/groups/member/:action", post(member_post))
         .route("/anp/meta", post(meta_message))
         .route("/anp/meta/ws", get(meta_ws))
         .route("/anp/groups", post(group_host_rpc))
@@ -97,6 +102,57 @@ async fn conversations_get(State(hub): State<Arc<Hub>>, addr: Option<ConnectInfo
     match q.get("peer") {
         Some(p) => Json(json!({ "peer": p, "messages": direct.conversation(p) })).into_response(),
         None => Json(json!({ "conversations": direct.conversations() })).into_response(),
+    }
+}
+
+/// The groups this node is a member of, or the log of one (`?group=DID`).
+async fn member_get(State(hub): State<Arc<Hub>>, addr: Option<ConnectInfo<SocketAddr>>, headers: HeaderMap, Query(q): Query<HashMap<String, String>>) -> Response {
+    if !local_caller(addr.as_ref(), &headers) {
+        return not_local();
+    }
+    let Some(g) = hub.group_member() else { return (StatusCode::NOT_FOUND, "group membership is off (--group-member)\n").into_response() };
+    match q.get("group") {
+        Some(d) => Json(json!({ "group": d, "events": g.messages(d) })).into_response(),
+        None => Json(json!({ "groups": g.groups() })).into_response(),
+    }
+}
+
+/// Create a group, add or remove a member, or send to a group, as this node.
+async fn member_post(State(hub): State<Arc<Hub>>, Path(action): Path<String>, addr: Option<ConnectInfo<SocketAddr>>, headers: HeaderMap, body: Bytes) -> Response {
+    if !local_caller(addr.as_ref(), &headers) {
+        return not_local();
+    }
+    let Some(g) = hub.group_member() else { return (StatusCode::NOT_FOUND, "group membership is off (--group-member)\n").into_response() };
+    let v: Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::BAD_REQUEST, format!("{e}\n")).into_response(),
+    };
+    let field = |k: &str| v[k].as_str().map(str::to_string).ok_or_else(|| format!("\"{k}\" is required"));
+    let r: Result<Value, String> = match action.as_str() {
+        "create" => match field("name") {
+            Ok(n) => g.create(&n, v["max_members"].as_u64()).await.map(|d| json!({ "group_did": d })),
+            Err(e) => Err(e),
+        },
+        "add" | "remove" => match (field("group"), field("member")) {
+            (Ok(gr), Ok(m)) => {
+                let dev = v["device_id"].as_str();
+                let done = if action == "add" { g.add(&gr, &m, dev).await } else { g.remove(&gr, &m, dev).await };
+                done.map(|_| json!({ "group": gr, "member": m, action.as_str(): true }))
+            }
+            (Err(e), _) | (_, Err(e)) => Err(e),
+        },
+        "send" => match field("group") {
+            Ok(gr) => match crate::direct_messaging::plaintext_of(&format!("app-{}", uuid::Uuid::new_v4()), v["text"].as_str(), v.get("payload")) {
+                Ok(p) => g.send(&gr, &p).await.map(|id| json!({ "group": gr, "message_id": id })),
+                Err(e) => Err(e),
+            },
+            Err(e) => Err(e),
+        },
+        other => return (StatusCode::NOT_FOUND, format!("no action {other}: create, add, remove or send\n")).into_response(),
+    };
+    match r {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, format!("{e}\n")).into_response(),
     }
 }
 

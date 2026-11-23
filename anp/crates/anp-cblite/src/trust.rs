@@ -267,6 +267,8 @@ pub struct Trust {
     did: Option<DidMode>,
     e2ee: Option<E2eeState>,
     key: SigningKey,
+    /// Profiles the DID document's device entry lists beyond the direct-messaging ones (the group profiles, for a group member).
+    extra_profiles: Vec<String>,
     /// Enrolled peers (never contains this node).
     peers: Mutex<HashMap<String, VerifyingKey>>,
     /// Newest accepted sequence number per document, for rollback detection (in memory).
@@ -286,6 +288,7 @@ impl Trust {
             did: None,
             e2ee: None,
             key,
+            extra_profiles: vec![],
             peers: Mutex::new(HashMap::new()),
             newest: Mutex::new(HashMap::new()),
             rejections: Mutex::new(Vec::new()),
@@ -362,6 +365,30 @@ impl Trust {
         }
     }
 
+    /// List these profiles too in the DID document's device entry (call before [`Trust::with_did`]): a node that joins
+    /// end-to-end encrypted groups lists the group profiles, which the group host checks every key package against.
+    pub fn with_device_profiles(mut self, profiles: &[&str]) -> Trust {
+        self.extra_profiles = profiles.iter().map(|p| p.to_string()).collect();
+        self
+    }
+
+    /// The node's signing key: what it signs its group key-package bindings and origin proofs with (the DID's own key).
+    pub(crate) fn signing_key(&self) -> &SigningKey {
+        &self.key
+    }
+
+    /// The verification method of the DID's own key, `<did>#<e1 fingerprint>`, in DID mode.
+    pub fn signing_method(&self) -> Option<String> {
+        let d = self.did.as_ref()?;
+        let fp = anp_did::WbaDid::parse(&d.did).ok()?.e1()?.to_string();
+        Some(format!("{}#{fp}", d.did))
+    }
+
+    /// This node's device id (the one its DID document's device manifest lists).
+    pub fn own_device_id(&self) -> String {
+        Self::device_id(&self.node_id)
+    }
+
     /// Switch to DID mode: this node becomes `did:wba:<host>[%3A<port>]:agents:<name>:e1_<fingerprint>` and peers
     /// are trusted by DID (see [`Trust::trust_did`]). `ad_endpoint` is advertised in the DID
     /// document as the node's `AgentDescription` service. Add [`Trust::with_biscuit`] afterwards to combine them: the
@@ -390,7 +417,8 @@ impl Trust {
         let created = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let ka_public = anp_e2ee::public_of(&anp_e2ee::ka_secret_from_seed(&self.key.to_bytes()));
         let device = Self::device_id(&self.node_id);
-        let doc = anp_did::build_document_full(&did, &self.key, &services, &created, Some(&ka_public), Some(&device)).map_err(|e| e.to_string())?;
+        let extra: Vec<&str> = self.extra_profiles.iter().map(String::as_str).collect();
+        let doc = anp_did::build_document_profiles(&did, &self.key, &services, &created, Some(&ka_public), Some(&device), &extra).map_err(|e| e.to_string())?;
         self.did = Some(DidMode {
             did,
             doc,

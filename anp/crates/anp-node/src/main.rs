@@ -70,6 +70,8 @@ struct Args {
     meta_protocols: Vec<String>,
     /// Be a group host for end-to-end encrypted groups (ANP-09 "P6"; needs `--did-host`, group DIDs are made on that domain).
     group_host: bool,
+    /// Be a member of end-to-end encrypted groups on the group host at this base URL.
+    group_member: Option<String>,
     /// Run the group host without `--require-auth`: anyone who can reach it can collect any device's notifications.
     group_open_mailboxes: bool,
     /// DIDs this node trusts (DID mode), repeatable.
@@ -128,6 +130,7 @@ fn parse_args() -> Result<Args, String> {
         handles: vec![],
         meta_protocols: vec![],
         group_host: false,
+        group_member: None,
         group_open_mailboxes: false,
         trust_dids: vec![],
         print_did: false,
@@ -194,6 +197,10 @@ fn parse_args() -> Result<Args, String> {
             "--handle" => a.handles.push(v()?),
         "--meta-protocol" => a.meta_protocols.push(v()?),
         "--group-host" | "--p6-host" => a.group_host = true,
+        "--group-member" => {
+                a.group_member = Some(v()?);
+                a.secure = true;
+            }
         "--group-open-mailboxes" | "--p6-open-mailboxes" => a.group_open_mailboxes = true,
         "--did-host" => {
                 a.did_host = Some(v()?);
@@ -215,7 +222,7 @@ fn parse_args() -> Result<Args, String> {
                 a.secure = true;
             }
             "-h" | "--help" => {
-                return Err("usage: anp-node [--name N] [--id ID] [--data DIR] [--http-port P] [--p2p-port P] [--connect ws://host:port/a2a]...\n       LLM agent (build with --features litert, Linux/macOS): [--model FILE.litertlm] [--role R] [--persona TEXT] [--max-tokens N]\n       Security: [--secure] [--trust trust.json] [--trust-peer name=PUBKEY]... [--print-pubkey]\n       Biscuit:  [--root-key ROOT_PUBKEY --token FILE [--revoked FILE]]  (tokens come from anp-admin)\n       Built-in agent: [--agent echo|reviewer|claims|writer]\n       DID (ANP): [--did-host HOST[:PORT] [--trust-did DID]... [--print-did] [--e2ee] [--handle LOCAL]... [--meta-protocol NAME[=FILE]]... [--group-host [--group-open-mailboxes]]]\n       Domains: [--trust-domain HOST[:PORT]]... [--resolver-roots CA.pem] [--resolver-allow-private]  (DIDs of a trusted domain are fetched over HTTPS)\n       Direct messages (ANP-09 P5): [--direct-messaging [--direct-peer DID=URL]...]  (needs --e2ee; peers are the --allow-caller documents)\n       ANP-02: [--require-auth [--public-origin https://HOST[:PORT]] [--allow-caller DID_DOC.json]... [--allow-legacy-auth]]\n       Transport/at rest: [--tls] [--pin-cert PEM] [--admit] [--db-key-env VAR]".into())
+                return Err("usage: anp-node [--name N] [--id ID] [--data DIR] [--http-port P] [--p2p-port P] [--connect ws://host:port/a2a]...\n       LLM agent (build with --features litert, Linux/macOS): [--model FILE.litertlm] [--role R] [--persona TEXT] [--max-tokens N]\n       Security: [--secure] [--trust trust.json] [--trust-peer name=PUBKEY]... [--print-pubkey]\n       Biscuit:  [--root-key ROOT_PUBKEY --token FILE [--revoked FILE]]  (tokens come from anp-admin)\n       Built-in agent: [--agent echo|reviewer|claims|writer]\n       DID (ANP): [--did-host HOST[:PORT] [--trust-did DID]... [--print-did] [--e2ee] [--handle LOCAL]... [--meta-protocol NAME[=FILE]]... [--group-host [--group-open-mailboxes]] [--group-member HOST_URL]]\n       Domains: [--trust-domain HOST[:PORT]]... [--resolver-roots CA.pem] [--resolver-allow-private]  (DIDs of a trusted domain are fetched over HTTPS)\n       Direct messages (ANP-09 P5): [--direct-messaging [--direct-peer DID=URL]...]  (needs --e2ee; peers are the --allow-caller documents)\n       ANP-02: [--require-auth [--public-origin https://HOST[:PORT]] [--allow-caller DID_DOC.json]... [--allow-legacy-auth]]\n       Transport/at rest: [--tls] [--pin-cert PEM] [--admit] [--db-key-env VAR]".into())
             }
             other => return Err(format!("unknown argument {other}")),
         }
@@ -329,6 +336,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let frag = if i == 0 { "#handle".to_string() } else { format!("#handle-{}", i + 1) };
                     extra.push(serde_json::json!({ "id": frag, "type": anp_wns::HANDLE_SERVICE_TYPE, "serviceEndpoint": handle.resolution_url() }));
                 }
+                // a group member's device must list the group profiles: the host checks every key package against them
+                let t = if args.group_member.is_some() { t.with_device_profiles(&anp_cblite::group_member::GROUP_PROFILES) } else { t };
                 t.with_did_services(host, port, None, extra)?
             }
             None => t,
@@ -521,6 +530,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         hub.set_direct_messaging(anp_cblite::direct_messaging::DirectMessaging::new(t, &args.data, peer_docs.clone(), endpoints, domain_trust.clone())?);
     }
+    if let Some(url) = &args.group_member {
+        let t = trust.clone().ok_or("--group-member needs DID mode (--did-host)")?;
+        if args.did_host.is_none() {
+            return Err("--group-member needs DID mode (--did-host)".into());
+        }
+        hub.set_group_member(anp_cblite::group_member::GroupMember::new(t, url, &args.data, peer_docs.clone(), domain_trust.clone())?);
+    }
     hub.set_posture(serde_json::json!({
         "tls": args.tls,
         "pinned": args.pin_cert.is_some(),
@@ -531,6 +547,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "legacyAuth": args.require_auth && args.allow_legacy_auth,
         "directMessaging": args.direct_messaging,
         "groupHost": args.group_host,
+        "groupMember": args.group_member,
         "trustedDomains": args.trust_domains,
     }));
 

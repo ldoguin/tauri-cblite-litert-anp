@@ -21,6 +21,7 @@ pub mod httpauth;
 pub mod hub;
 pub mod meta;
 pub mod group_host;
+pub mod group_member;
 #[cfg(feature = "enterprise")]
 pub mod p2p;
 pub mod direct_messaging;

@@ -10,6 +10,7 @@ mod did;
 mod direct;
 mod e2ee;
 mod fielddid;
+mod group;
 mod hardened;
 mod harness;
 mod mesh;
@@ -29,6 +30,7 @@ const TASKS: &[(&str, &str)] = &[
     ("e2e-did-biscuit", "DID and Biscuit together: tokens bound to DIDs, scoping, stolen tokens, revocation (as scripts/e2e-did-biscuit.ps1)"),
     ("e2e-e2ee", "end-to-end encryption through a relay, with a plaintext peer and a control run (as scripts/e2e-e2ee.ps1)"),
     ("e2e-direct", "two nodes on two domains start encrypted direct conversations with each other, both ways: answers, follow-ups, a restart, the guards"),
+    ("e2e-group", "three nodes of three companies in an encrypted group hosted by a fourth: create, add, write, read, a restart, a removal, what the host holds"),
     ("group-host", "the group host for end-to-end encrypted groups (ANP P6) over signed HTTP: the node_live tests against a node started here (the host part of scripts/e2e-group-host.ps1; also runs as p6-host)"),
 ];
 
@@ -48,6 +50,7 @@ fn main() {
         "e2e-did-biscuit" => biscuit::run(),
         "e2e-e2ee" => e2ee::run(),
         "e2e-direct" => direct::run(),
+        "e2e-group" => group::run(),
         "group-host" | "p6-host" => grouphost::run(),
         "all" => {
             let mut worst = 0;
@@ -67,6 +70,7 @@ fn main() {
                     "e2e-did-biscuit" => biscuit::run(),
                     "e2e-e2ee" => e2ee::run(),
                     "e2e-direct" => direct::run(),
+                    "e2e-group" => group::run(),
                     _ => grouphost::run(),
                 };
                 match r {

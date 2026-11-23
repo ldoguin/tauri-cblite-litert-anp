@@ -38,5 +38,7 @@ anp-resolve = { path = "../anp-resolve" }
 anp-wns = { path = "../anp-wns" }
 anp-meta = { path = "../anp-meta" }
 anp-group-host = { path = "../anp-group-host" }
+anp-group = { path = "../anp-group" }
+anp-group-mls = { path = "../anp-group-mls" }
 ureq = { version = "2", default-features = false }
 

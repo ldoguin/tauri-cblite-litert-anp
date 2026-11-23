@@ -147,6 +147,8 @@ pub struct Hub {
     http_refusals: Mutex<Vec<(String, i64)>>,
     /// ANP-09 P5 messaging for peers on other ANP stacks (see `p5`).
     direct_messaging: Mutex<Option<Arc<crate::direct_messaging::DirectMessaging>>>,
+    /// Membership of end-to-end encrypted groups on some host (see `group_member`).
+    group_member: Mutex<Option<Arc<crate::group_member::GroupMember>>>,
 }
 
 impl Hub {
@@ -179,6 +181,7 @@ impl Hub {
             group_host_require_caller: std::sync::atomic::AtomicBool::new(false),
             http_refusals: Mutex::new(Vec::new()),
             direct_messaging: Mutex::new(None),
+            group_member: Mutex::new(None),
         });
 
         // Task changes (local or replicated) -> broadcast for waiters/streams.
@@ -280,6 +283,18 @@ impl Hub {
 
     pub fn direct_messaging(&self) -> Option<Arc<crate::direct_messaging::DirectMessaging>> {
         self.direct_messaging.lock().unwrap().clone()
+    }
+
+    pub fn set_group_member(&self, g: crate::group_member::GroupMember) {
+        let g = Arc::new(g);
+        if tokio::runtime::Handle::try_current().is_ok() {
+            g.start(); // publishes a key package, then collects the mailbox
+        }
+        *self.group_member.lock().unwrap() = Some(g);
+    }
+
+    pub fn group_member(&self) -> Option<Arc<crate::group_member::GroupMember>> {
+        self.group_member.lock().unwrap().clone()
     }
 
     pub fn note_http_refusal(&self, why: &str) {

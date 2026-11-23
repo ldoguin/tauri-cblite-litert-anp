@@ -421,6 +421,26 @@ pub fn build_document_full(
     agreement: Option<&[u8; 32]>,
     device_id: Option<&str>,
 ) -> Result<Value, DidError> {
+    build_document_profiles(did, sk, services, created, agreement, device_id, &[])
+}
+
+/// [`build_document_full`], with `extra_profiles` listed for the device after [`DEVICE_PROFILES`] (for example the
+/// group profiles, for a device that joins end-to-end encrypted groups).
+pub fn build_document_profiles(
+    did: &str,
+    sk: &SigningKey,
+    services: &[Value],
+    created: &str,
+    agreement: Option<&[u8; 32]>,
+    device_id: Option<&str>,
+    extra_profiles: &[&str],
+) -> Result<Value, DidError> {
+    let mut profiles: Vec<&str> = DEVICE_PROFILES.to_vec();
+    for p in extra_profiles {
+        if !profiles.contains(p) {
+            profiles.push(p);
+        }
+    }
     let parsed = WbaDid::parse(did)?;
     let pk = sk.verifying_key().to_bytes();
     let fp = parsed.e1().ok_or_else(|| DidError::Binding("the DID has no e1_ fingerprint".into()))?;
@@ -458,7 +478,7 @@ pub fn build_document_full(
                     "device_id": dev,
                     "signing_key_id": vm_id,
                     "e2ee_key_id": key_agreement_id(did),
-                    "profiles": DEVICE_PROFILES,
+                    "profiles": profiles,
                 }],
             });
         }

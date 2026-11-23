@@ -107,7 +107,7 @@ enum Outcome {
 const LOG_PER_PEER: usize = 200;
 
 /// Sign `body` with ANP-02 and POST it to `url`: the status and the answer. Blocking (call it from `spawn_blocking`).
-fn post_signed(trust: &Trust, url: &str, body: &str) -> Result<(u16, String), String> {
+pub(crate) fn post_signed(trust: &Trust, url: &str, body: &str) -> Result<(u16, String), String> {
     let nonce = uuid::Uuid::new_v4().to_string();
     let mut req = ureq::post(url).timeout(Duration::from_secs(20)).set("content-type", "application/json");
     for (k, v) in trust.sign_http("POST", url, body.as_bytes(), &nonce)? {
