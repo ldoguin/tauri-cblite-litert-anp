@@ -1,0 +1,92 @@
+# The fleet's Couchbase Server: one node, run by the Couchbase Autonomous Operator in a local k3d cluster (`cargo xtask fleet-up`).
+# Adapted from kubecondemo's k8s-mobile-sync scenario, cut from three nodes to one to fit Docker's 4 GB VM.
+#
+# One bucket, `fleet`, with the scope the nodes already use (`a2a`) and its collections. Sync Gateway serves it as the database `anp`
+# (sync-gateway.yaml, and the database config `fleet-up` puts: sync.js on every collection).
+apiVersion: couchbase.com/v2
+kind: CouchbaseCluster
+metadata:
+  name: anp-fleet
+  namespace: couchbase
+spec:
+  image: couchbase/server:enterprise-8.0.2
+  security:
+    adminSecret: cb-admin-auth
+  cluster:
+    dataServiceMemoryQuota: 512Mi
+    indexServiceMemoryQuota: 256Mi
+    # one node: nothing to fail over to
+    autoFailoverTimeout: 120s
+  buckets:
+    managed: true
+  servers:
+    # index and query: Sync Gateway keeps its channel indexes in GSI
+    - name: all
+      size: 1
+      services: [data, index, query]
+      volumeMounts:
+        default: pvc-default
+        data: pvc-data
+  volumeClaimTemplates:
+    - metadata:
+        name: pvc-default
+      spec:
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 1Gi
+    - metadata:
+        name: pvc-data
+      spec:
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 2Gi
+---
+apiVersion: couchbase.com/v2
+kind: CouchbaseBucket
+metadata:
+  name: fleet
+  namespace: couchbase
+spec:
+  memoryQuota: 128Mi
+  # no replicas: one node
+  replicas: 0
+  scopes:
+    managed: true
+    resources:
+      - kind: CouchbaseScope
+        name: a2a
+---
+apiVersion: couchbase.com/v2
+kind: CouchbaseScope
+metadata:
+  name: a2a
+  namespace: couchbase
+spec:
+  collections:
+    managed: true
+    resources:
+      - kind: CouchbaseCollectionGroup
+        name: a2a-collections
+---
+# The node's collections (anp-cblite's `Coll`): inbox, tasks, agents, revocations, telemetry.
+apiVersion: couchbase.com/v2
+kind: CouchbaseCollectionGroup
+metadata:
+  name: a2a-collections
+  namespace: couchbase
+spec:
+  names: [inbox, tasks, agents, revocations, telemetry]
+---
+# The web console on the host: http://127.0.0.1:18091 (k3d maps it to this node port).
+apiVersion: v1
+kind: Service
+metadata:
+  name: anp-fleet-console
+  namespace: couchbase
+spec:
+  type: NodePort
+  selector: { app: couchbase, couchbase_cluster: anp-fleet }
+  ports:
+    - { name: console, port: 8091, targetPort: 8091, nodePort: 30091 }

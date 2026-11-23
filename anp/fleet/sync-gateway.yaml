@@ -1,0 +1,66 @@
+# Sync Gateway for the fleet, on the one-node cluster in cluster.yaml. Adapted from kubecondemo's k8s-mobile-sync scenario.
+#
+# On the host (k3d maps the node ports): the public API, where stores replicate, on ws://localhost:4984/anp; the admin API on
+# http://127.0.0.1:4985, which has no authentication here and so is mapped to loopback only (inside the pod it listens on all
+# interfaces, or the node port could not reach it).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sync-gateway-config
+  namespace: couchbase
+data:
+  config.json: |
+    {
+      "bootstrap": {
+        "server": "couchbase://anp-fleet-srv.couchbase.svc",
+        "use_tls_server": false,
+        "username": "Administrator",
+        "password": "password123"
+      },
+      "api": {
+        "admin_interface": ":4985",
+        "admin_interface_authentication": false,
+        "metrics_interface_authentication": false
+      },
+      "logging": {
+        "console": { "enabled": true, "log_level": "info", "log_keys": ["HTTP", "CRUD", "Sync", "SyncMsg"] }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sync-gateway
+  namespace: couchbase
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: sync-gateway }
+  template:
+    metadata:
+      labels: { app: sync-gateway }
+    spec:
+      containers:
+        - name: sync-gateway
+          image: couchbase/sync-gateway:4.1.2-community
+          args: ["/etc/sync_gateway/config.json"]
+          ports:
+            - { name: public, containerPort: 4984 }
+            - { name: admin, containerPort: 4985 }
+          volumeMounts:
+            - { name: config, mountPath: /etc/sync_gateway }
+      volumes:
+        - name: config
+          configMap: { name: sync-gateway-config }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sync-gateway
+  namespace: couchbase
+spec:
+  type: NodePort
+  selector: { app: sync-gateway }
+  ports:
+    - { name: public, port: 4984, targetPort: 4984, nodePort: 30984 }
+    - { name: admin, port: 4985, targetPort: 4985, nodePort: 30985 }

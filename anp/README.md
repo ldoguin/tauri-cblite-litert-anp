@@ -487,6 +487,25 @@ and real use start it with no pace. The recording tools (`scripts/video/record.m
 the rescue uses `rescue-intro.html`, `rescue-outro.html` and `rescue-explainers.js`. Like the rest of the project, the store and the companies
 are fictional and the agent plans by rules; the protocol, signatures and encryption are real.
 
+### The fleet: Couchbase Server and Sync Gateway (in progress)
+
+Inside the retailer, stores will sync with head office through Sync Gateway; between companies it stays ANP. `cargo xtask fleet-up`
+stands up the server side in a local k3d cluster: the Couchbase Autonomous Operator, one Server 8.0.2 node with bucket `fleet`, scope `a2a` and
+the node's collections, and Sync Gateway 4.1.2 with database `anp` (manifests in [`fleet/`](fleet), adapted from kubecondemo's
+`k8s-mobile-sync`). Needs docker, k3d, kubectl and helm.
+
+```text
+cargo xtask fleet-up      # idempotent; ends with a check through the public API as two test stores, and the memory used
+cargo xtask fleet-down    # deletes the k3d cluster and its data
+```
+
+* Stores replicate to `ws://localhost:4984/anp`; the admin API (`http://127.0.0.1:4985`, no authentication) and the web console
+  (`http://127.0.0.1:18091`, Administrator / password123) are on loopback only. A local test cluster: those credentials are not secrets.
+* The sync function ([`fleet/sync.js`](fleet/sync.js)) routes by the signer a node puts in `trust.author`: a store writes only documents it
+  signed, into its own channel `store.<node>`; documents no node signed (revocations, tokens) come from head office into `fleet`. Signatures
+  are still verified by the nodes that read them.
+* Not yet: the node replicating to Sync Gateway (`--sync-gateway`, step F3 of the plan).
+
 ## Build and test
 
 Names: the flags `--direct-messaging`, `--direct-peer`, `--group-host`, `--group-open-mailboxes`, the paths `/anp/direct` and `/anp/groups`, and the

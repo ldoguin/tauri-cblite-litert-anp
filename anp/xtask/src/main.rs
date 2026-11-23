@@ -12,6 +12,7 @@ mod did;
 mod direct;
 mod e2ee;
 mod fielddid;
+mod fleet;
 mod group;
 mod hardened;
 mod harness;
@@ -67,6 +68,8 @@ fn main() {
         "e2e-model" => rescue::run_model(&args),
         "cold-rescue" => coldrescue::run(&args),
         "group-host" | "p6-host" => grouphost::run(),
+        "fleet-up" => fleet::up(&args),
+        "fleet-down" => fleet::down(),
         "all" => {
             let mut worst = 0;
             for (name, _) in TASKS {
@@ -110,6 +113,8 @@ fn main() {
             eprintln!("  all              every task above that needs no other machine (not e2e-cross-os, e2e-second-host)");
             eprintln!("  e2e-model        the night with an on-device model advising the agent, the rules deciding (a LiteRT build: Linux or macOS, e.g. WSL) --model FILE.litertlm");
             eprintln!("  cold-rescue      the demo: the night's ten nodes and the control room at http://127.0.0.1:19102/demo/rescue [--record OUT.mp4]");
+            eprintln!("  fleet-up         the fleet's Couchbase Server and Sync Gateway in a local k3d cluster (needs docker, k3d, kubectl, helm) [--no-check]");
+            eprintln!("  fleet-down       delete that k3d cluster and its data");
             std::process::exit(if task.is_empty() || task == "help" { 0 } else { 2 });
         }
     };
