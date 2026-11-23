@@ -178,7 +178,12 @@ pub fn is_public(path: &str) -> bool {
 /// The node operator's own controls: no peer ever signs for them, so they are not ANP-02 calls; the handler answers
 /// only callers on this machine (see `server::local_caller`).
 pub fn is_local_control(path: &str) -> bool {
-    path == "/anp/direct/conversations" || path == "/anp/groups/member" || path.starts_with("/anp/groups/member/")
+    path == "/anp/direct/conversations"
+        || path == "/anp/groups/member"
+        || path.starts_with("/anp/groups/member/")
+        || path == "/store/sim"
+        || path.starts_with("/store/sim/")
+        || path == "/telemetry"
 }
 
 fn unauthorized(origin: &str, why: &str) -> Response {

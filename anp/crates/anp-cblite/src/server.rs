@@ -61,6 +61,9 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .route("/anp/direct/conversations", get(conversations_get).post(conversations_post))
         .route("/anp/groups/member", get(member_get))
         .route("/anp/groups/member/:action", post(member_post))
+        .route("/store/sim", get(store_sim_get))
+        .route("/store/sim/:action", post(store_sim_post))
+        .route("/telemetry", get(telemetry_get))
         .route("/anp/meta", post(meta_message))
         .route("/anp/meta/ws", get(meta_ws))
         .route("/anp/groups", post(group_host_rpc))
@@ -102,6 +105,59 @@ async fn conversations_get(State(hub): State<Arc<Hub>>, addr: Option<ConnectInfo
     match q.get("peer") {
         Some(p) => Json(json!({ "peer": p, "messages": direct.conversation(p) })).into_response(),
         None => Json(json!({ "conversations": direct.conversations() })).into_response(),
+    }
+}
+
+/// The simulated cold room: units, the assessment of every product, what is sellable and lost (see `coldstore`).
+async fn store_sim_get(State(hub): State<Arc<Hub>>, addr: Option<ConnectInfo<SocketAddr>>, headers: HeaderMap) -> Response {
+    if !local_caller(addr.as_ref(), &headers) {
+        return not_local();
+    }
+    match hub.store_sim() {
+        Some(s) => Json(s.state()).into_response(),
+        None => (StatusCode::NOT_FOUND, "this node runs no store simulation (--store-sim)\n").into_response(),
+    }
+}
+
+/// `fault` `{"unit", "fault": name | null}` or `advance` `{"minutes"}`.
+async fn store_sim_post(State(hub): State<Arc<Hub>>, Path(action): Path<String>, addr: Option<ConnectInfo<SocketAddr>>, headers: HeaderMap, body: Bytes) -> Response {
+    if !local_caller(addr.as_ref(), &headers) {
+        return not_local();
+    }
+    let Some(s) = hub.store_sim() else { return (StatusCode::NOT_FOUND, "this node runs no store simulation (--store-sim)\n").into_response() };
+    let v: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let r = match action.as_str() {
+        "fault" => {
+            let unit = v["unit"].as_str().unwrap_or("");
+            match &v["fault"] {
+                Value::Null => s.set_fault(unit, None).await,
+                Value::String(f) => match anp_coldstore::Fault::parse(f) {
+                    Some(f) => s.set_fault(unit, Some(f)).await,
+                    None => Err(format!("unknown fault {f}: defrost-stuck or compressor-off")),
+                },
+                _ => Err("\"fault\" is a fault name or null".into()),
+            }
+        }
+        "advance" => match v["minutes"].as_u64() {
+            Some(m) => s.advance(m as u32).await,
+            None => Err("\"minutes\" is required".into()),
+        },
+        other => return (StatusCode::NOT_FOUND, format!("no action {other}: fault or advance\n")).into_response(),
+    };
+    match r {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, format!("{e}\n")).into_response(),
+    }
+}
+
+/// Every unit's temperature log this node holds (its own and replicated), as verified.
+async fn telemetry_get(State(hub): State<Arc<Hub>>, addr: Option<ConnectInfo<SocketAddr>>, headers: HeaderMap) -> Response {
+    if !local_caller(addr.as_ref(), &headers) {
+        return not_local();
+    }
+    match crate::coldstore::telemetry(&hub.docs).await {
+        Ok(v) => Json(json!({ "logs": v })).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}\n")).into_response(),
     }
 }
 

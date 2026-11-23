@@ -72,6 +72,8 @@ struct Args {
     group_host: bool,
     /// Be a member of end-to-end encrypted groups on the group host at this base URL.
     group_member: Option<String>,
+    /// Run the simulated cold room of store 0412 at this many simulated minutes per second (0: only when advanced).
+    store_sim: Option<u32>,
     /// Run the group host without `--require-auth`: anyone who can reach it can collect any device's notifications.
     group_open_mailboxes: bool,
     /// DIDs this node trusts (DID mode), repeatable.
@@ -131,6 +133,7 @@ fn parse_args() -> Result<Args, String> {
         meta_protocols: vec![],
         group_host: false,
         group_member: None,
+        store_sim: None,
         group_open_mailboxes: false,
         trust_dids: vec![],
         print_did: false,
@@ -197,6 +200,7 @@ fn parse_args() -> Result<Args, String> {
             "--handle" => a.handles.push(v()?),
         "--meta-protocol" => a.meta_protocols.push(v()?),
         "--group-host" | "--p6-host" => a.group_host = true,
+        "--store-sim" => a.store_sim = Some(v()?.parse().map_err(|e| format!("--store-sim wants simulated minutes per second (0 = manual): {e}"))?),
         "--group-member" => {
                 a.group_member = Some(v()?);
                 a.secure = true;
@@ -222,7 +226,7 @@ fn parse_args() -> Result<Args, String> {
                 a.secure = true;
             }
             "-h" | "--help" => {
-                return Err("usage: anp-node [--name N] [--id ID] [--data DIR] [--http-port P] [--p2p-port P] [--connect ws://host:port/a2a]...\n       LLM agent (build with --features litert, Linux/macOS): [--model FILE.litertlm] [--role R] [--persona TEXT] [--max-tokens N]\n       Security: [--secure] [--trust trust.json] [--trust-peer name=PUBKEY]... [--print-pubkey]\n       Biscuit:  [--root-key ROOT_PUBKEY --token FILE [--revoked FILE]]  (tokens come from anp-admin)\n       Built-in agent: [--agent echo|reviewer|claims|writer]\n       DID (ANP): [--did-host HOST[:PORT] [--trust-did DID]... [--print-did] [--e2ee] [--handle LOCAL]... [--meta-protocol NAME[=FILE]]... [--group-host [--group-open-mailboxes]] [--group-member HOST_URL]]\n       Domains: [--trust-domain HOST[:PORT]]... [--resolver-roots CA.pem] [--resolver-allow-private]  (DIDs of a trusted domain are fetched over HTTPS)\n       Direct messages (ANP-09 P5): [--direct-messaging [--direct-peer DID=URL]...]  (needs --e2ee; peers are the --allow-caller documents)\n       ANP-02: [--require-auth [--public-origin https://HOST[:PORT]] [--allow-caller DID_DOC.json]... [--allow-legacy-auth]]\n       Transport/at rest: [--tls] [--pin-cert PEM] [--admit] [--db-key-env VAR]".into())
+                return Err("usage: anp-node [--name N] [--id ID] [--data DIR] [--http-port P] [--p2p-port P] [--connect ws://host:port/a2a]...\n       LLM agent (build with --features litert, Linux/macOS): [--model FILE.litertlm] [--role R] [--persona TEXT] [--max-tokens N]\n       Security: [--secure] [--trust trust.json] [--trust-peer name=PUBKEY]... [--print-pubkey]\n       Biscuit:  [--root-key ROOT_PUBKEY --token FILE [--revoked FILE]]  (tokens come from anp-admin)\n       Built-in agent: [--agent echo|reviewer|claims|writer]\n       DID (ANP): [--did-host HOST[:PORT] [--trust-did DID]... [--print-did] [--e2ee] [--handle LOCAL]... [--meta-protocol NAME[=FILE]]... [--group-host [--group-open-mailboxes]] [--group-member HOST_URL]]\n       Cold-stock scenario: [--store-sim MIN_PER_SEC]  (simulated store 0412; its temperature log is signed and replicated; needs a secure mode)\n       Domains: [--trust-domain HOST[:PORT]]... [--resolver-roots CA.pem] [--resolver-allow-private]  (DIDs of a trusted domain are fetched over HTTPS)\n       Direct messages (ANP-09 P5): [--direct-messaging [--direct-peer DID=URL]...]  (needs --e2ee; peers are the --allow-caller documents)\n       ANP-02: [--require-auth [--public-origin https://HOST[:PORT]] [--allow-caller DID_DOC.json]... [--allow-legacy-auth]]\n       Transport/at rest: [--tls] [--pin-cert PEM] [--admit] [--db-key-env VAR]".into())
             }
             other => return Err(format!("unknown argument {other}")),
         }
@@ -530,6 +534,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         hub.set_direct_messaging(anp_cblite::direct_messaging::DirectMessaging::new(t, &args.data, peer_docs.clone(), endpoints, domain_trust.clone())?);
     }
+    if let Some(speed) = args.store_sim {
+        if trust.is_none() {
+            return Err("--store-sim publishes a signed temperature log: run in a secure mode (--secure, --root-key or --did-host)".into());
+        }
+        hub.set_store_sim(&args.id, speed);
+    }
     if let Some(url) = &args.group_member {
         let t = trust.clone().ok_or("--group-member needs DID mode (--did-host)")?;
         if args.did_host.is_none() {
@@ -548,6 +558,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "directMessaging": args.direct_messaging,
         "groupHost": args.group_host,
         "groupMember": args.group_member,
+        "storeSim": args.store_sim,
         "trustedDomains": args.trust_domains,
     }));
 

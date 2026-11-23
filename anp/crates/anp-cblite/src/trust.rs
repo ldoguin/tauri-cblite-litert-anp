@@ -1195,6 +1195,10 @@ fn authorize(coll: Coll, id: &str, content: &Value, author: &str) -> Result<(), 
             format!("'{author}' is not the owner of this task ({:?})", field("owner")),
         ),
         Coll::Revocations => Ok(()), // checked by `verify_revocation_doc` before this is reached
+        Coll::Telemetry => ok(
+            field("node") == Some(author) && id.strip_prefix(author).map_or(false, |rest| rest.starts_with("::")),
+            format!("'{author}' may only publish its own readings, not '{id}'"),
+        ),
         Coll::Inbox => ok(
             field("from") == Some(author),
             format!("'{author}' cannot issue a command from '{}'", field("from").unwrap_or("?")),
@@ -2162,5 +2166,24 @@ mod tests {
         let svc = v.services().into_iter().find(|s| s["type"] == "ANPMessageService").unwrap();
         assert!(svc["id"].as_str().unwrap().ends_with("#message") && svc["id"].as_str().unwrap().starts_with("did:wba:"), "a relative id becomes a DID URL");
         assert!(v.service_endpoint("AgentDescription").is_some(), "the agent description service stays");
+    }
+
+    #[test]
+    fn only_a_node_writes_its_own_readings() {
+        let reading = |node: &str| json!({ "node": node, "unit": "frz-1", "readings": [] });
+        assert!(authorize(Coll::Telemetry, "store::frz-1", &reading("store"), "store").is_ok());
+        assert!(authorize(Coll::Telemetry, "store::frz-1", &reading("store"), "hq").is_err(), "someone else signing the store's log");
+        assert!(authorize(Coll::Telemetry, "store::frz-1", &reading("hq"), "hq").is_err(), "the id names the store");
+        assert!(authorize(Coll::Telemetry, "storefront::frz-1", &reading("store"), "store").is_err(), "a prefix is not the node");
+        assert!(authorize(Coll::Telemetry, "store", &reading("store"), "store").is_err());
+        // and a real signature over it holds on another node, and breaks if a reading is changed
+        let (store, hq) = (node("store", 1), node("hq", 2));
+        hq.enroll("store", &store.public_key()).unwrap();
+        let mut doc = reading("store");
+        doc["readings"] = json!([{ "minute": 5, "tempC": -19.8 }]);
+        store.sign(Coll::Telemetry, "store::frz-1", &mut doc);
+        assert!(hq.verify(Coll::Telemetry, "store::frz-1", &doc).is_ok());
+        doc["readings"][0]["tempC"] = json!(-20.0);
+        assert!(hq.verify(Coll::Telemetry, "store::frz-1", &doc).is_err(), "a rewritten reading");
     }
 }

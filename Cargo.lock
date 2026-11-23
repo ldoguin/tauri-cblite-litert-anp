@@ -144,6 +144,7 @@ dependencies = [
  "a2a-core",
  "anp-ad",
  "anp-authz",
+ "anp-coldstore",
  "anp-did",
  "anp-e2ee",
  "anp-group",
@@ -169,6 +170,13 @@ dependencies = [
  "tokio-stream",
  "ureq",
  "uuid",
+]
+
+[[package]]
+name = "anp-coldstore"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]

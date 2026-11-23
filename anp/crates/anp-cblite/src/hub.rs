@@ -149,6 +149,8 @@ pub struct Hub {
     direct_messaging: Mutex<Option<Arc<crate::direct_messaging::DirectMessaging>>>,
     /// Membership of end-to-end encrypted groups on some host (see `group_member`).
     group_member: Mutex<Option<Arc<crate::group_member::GroupMember>>>,
+    /// The simulated cold room this node runs, if it is a store's node (see `coldstore`).
+    store_sim: Mutex<Option<Arc<crate::coldstore::ColdStoreSim>>>,
 }
 
 impl Hub {
@@ -182,6 +184,7 @@ impl Hub {
             http_refusals: Mutex::new(Vec::new()),
             direct_messaging: Mutex::new(None),
             group_member: Mutex::new(None),
+            store_sim: Mutex::new(None),
         });
 
         // Task changes (local or replicated) -> broadcast for waiters/streams.
@@ -295,6 +298,19 @@ impl Hub {
 
     pub fn group_member(&self) -> Option<Arc<crate::group_member::GroupMember>> {
         self.group_member.lock().unwrap().clone()
+    }
+
+    /// Run the simulated cold room at `speed` simulated minutes per second (0: only when advanced).
+    pub fn set_store_sim(&self, node: &str, speed: u32) {
+        let s = Arc::new(crate::coldstore::ColdStoreSim::new(node, self.docs.clone(), speed));
+        if tokio::runtime::Handle::try_current().is_ok() {
+            s.start();
+        }
+        *self.store_sim.lock().unwrap() = Some(s);
+    }
+
+    pub fn store_sim(&self) -> Option<Arc<crate::coldstore::ColdStoreSim>> {
+        self.store_sim.lock().unwrap().clone()
     }
 
     pub fn note_http_refusal(&self, why: &str) {

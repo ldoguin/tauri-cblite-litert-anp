@@ -40,5 +40,6 @@ anp-meta = { path = "../anp-meta" }
 anp-group-host = { path = "../anp-group-host" }
 anp-group = { path = "../anp-group" }
 anp-group-mls = { path = "../anp-group-mls" }
+anp-coldstore = { path = "../anp-coldstore" }
 ureq = { version = "2", default-features = false }
 

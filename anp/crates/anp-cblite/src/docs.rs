@@ -39,16 +39,19 @@ pub enum Coll {
     Agents,
     /// Authority-signed token revocations (Biscuit mode); written by whoever receives one.
     Revocations,
+    /// Sensor readings (a freezer's temperature log); a document `<node>::<unit>` is written only by that node.
+    Telemetry,
 }
 
 impl Coll {
-    pub const ALL: [Coll; 4] = [Coll::Inbox, Coll::Tasks, Coll::Agents, Coll::Revocations];
+    pub const ALL: [Coll; 5] = [Coll::Inbox, Coll::Tasks, Coll::Agents, Coll::Revocations, Coll::Telemetry];
     pub fn name(self) -> &'static str {
         match self {
             Coll::Inbox => "inbox",
             Coll::Tasks => "tasks",
             Coll::Agents => "agents",
             Coll::Revocations => "revocations",
+            Coll::Telemetry => "telemetry",
         }
     }
     /// `scope.collection`, the spelling `tauri-plugin-cblite` uses.
