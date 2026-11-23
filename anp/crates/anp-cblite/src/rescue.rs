@@ -142,6 +142,9 @@ pub struct Rescue {
     state: Mutex<State>,
     /// The duty manager's answer: `Some(true)` approve, `Some(false)` decline.
     decision: Mutex<Option<bool>>,
+    /// A demo's pace: how long the agent dwells on each phase it enters (a third of it between repeated steps), so that a viewer
+    /// and the captions can follow. 0 (tests, real use): no pause.
+    pace_ms: std::sync::atomic::AtomicU64,
     decided: tokio::sync::Notify,
 }
 
@@ -156,6 +159,7 @@ impl Rescue {
             group,
             state: Mutex::new(State { phase: "idle".into(), log: vec![], plan: vec![], approval: None, group: None, summary: None }),
             decision: Mutex::new(None),
+            pace_ms: std::sync::atomic::AtomicU64::new(0),
             decided: tokio::sync::Notify::new(),
         }
     }
@@ -207,8 +211,26 @@ impl Rescue {
         *self.directory.lock().unwrap() = found;
     }
 
-    /// Start the rescue, unless one is running.
-    pub fn start(self: &Arc<Self>) -> Result<(), String> {
+    /// Enter a phase and, at a demo's pace, dwell on it before working.
+    async fn enter(&self, p: &str) {
+        self.phase(p);
+        let ms = self.pace_ms.load(std::sync::atomic::Ordering::Relaxed);
+        if ms > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+        }
+    }
+
+    /// Between repeated steps (each confirmation, each member added), at a demo's pace.
+    async fn beat(&self) {
+        let ms = self.pace_ms.load(std::sync::atomic::Ordering::Relaxed) / 3;
+        if ms > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+        }
+    }
+
+    /// Start the rescue, unless one is running. `pace_ms` slows it down for a viewer (a demo); 0 runs it at full speed.
+    pub fn start(self: &Arc<Self>, pace_ms: u64) -> Result<(), String> {
+        self.pace_ms.store(pace_ms.min(30_000), std::sync::atomic::Ordering::Relaxed);
         {
             let mut s = self.state.lock().unwrap();
             if !matches!(s.phase.as_str(), "idle" | "done" | "failed" | "declined") {
@@ -319,11 +341,11 @@ impl Rescue {
     async fn run(self: &Arc<Self>) -> Result<(), String> {
         // 0. who can help: found through the search agent, when there is one
         if let Some(s) = self.search.clone() {
-            self.phase("discovering");
+            self.enter("discovering").await;
             self.discover(&s).await;
         }
         // 1. assess
-        self.phase("assessing");
+        self.enter("assessing").await;
         let st = self.store.state();
         let n = needs(&st);
         let at_stake: u64 = n.frozen.iter().map(|p| p.value_minor).sum();
@@ -345,7 +367,7 @@ impl Rescue {
         let deadline = n.deadline_min.unwrap_or(u64::MAX);
 
         // 2. ask, everyone at once per need
-        self.phase("asking");
+        self.enter("asking").await;
         let carriers = if frozen > 0 { self.ask_all(&self.of_role("carrier"), "transport", frozen).await } else { vec![] };
         let warehouses = if frozen > 0 { self.ask_all(&self.of_role("warehouse"), "storage", frozen).await } else { vec![] };
         let banks = if n.chilled > 0 { self.ask_all(&self.of_role("foodbank"), "donation", n.chilled).await } else { vec![] };
@@ -353,7 +375,7 @@ impl Rescue {
         let suppliers = if n.lost_pallets > 0 { self.ask_all(&self.of_role("supplier"), "restock", n.lost_pallets).await } else { vec![] };
 
         // 3. choose, through the rules
-        self.phase("choosing");
+        self.enter("choosing").await;
         let mut plan: Vec<Pick> = vec![];
         let mut moved = 0u32;
         if frozen > 0 {
@@ -478,9 +500,10 @@ impl Rescue {
         }
 
         // 5. commit, one acceptance per need
-        self.phase("committing");
+        self.enter("committing").await;
         let mut confirmed: Vec<Pick> = vec![];
         for p in &plan {
+            self.beat().await;
             match self.commit(p).await {
                 Ok(true) => confirmed.push(p.clone()),
                 Ok(false) => {}
@@ -497,7 +520,7 @@ impl Rescue {
     /// 6. coordinate, 7. prove.
     async fn finish(&self, confirmed: Vec<Pick>, at_stake: u64) -> Result<(), String> {
         if let (Some(g), false) = (&self.group, confirmed.is_empty()) {
-            self.phase("coordinating");
+            self.enter("coordinating").await;
             let name = format!("rescue-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
             match g.create(&name, None).await {
                 Ok(group) => {
@@ -506,6 +529,7 @@ impl Rescue {
                     let directory = self.directory.lock().unwrap().clone();
                     let dids: Vec<String> = confirmed.iter().filter_map(|p| directory.iter().find(|c| c.name == p.company).map(|c| c.did.clone())).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
                     for did in dids {
+                        self.beat().await;
                         match g.add(&group, &did, None).await {
                             Ok(()) => self.note("coordinating", &format!("{} joins the group", self.name_of(&did)), None, Value::Null),
                             Err(e) => self.note("coordinating", &format!("could not add {}: {e}", self.name_of(&did)), None, Value::Null),
@@ -522,7 +546,7 @@ impl Rescue {
             }
         }
         // prove: every confirmed deal audits
-        self.phase("proving");
+        self.enter("proving").await;
         let st = self.buyer.state();
         let mut audited = 0;
         for (id, a) in st["acceptances"].as_object().into_iter().flatten() {

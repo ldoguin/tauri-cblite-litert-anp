@@ -166,7 +166,7 @@ async fn rescue_get(State(hub): State<Arc<Hub>>, addr: Option<ConnectInfo<Socket
     }
 }
 
-/// `start`; `approve` `{budget?, token?}` (the duty manager: a new budget in euros, a new token from the authority); `decline`.
+/// `start` `{paceMs?}`; `approve` `{budget?, token?}` (the duty manager: a new budget in euros, a new token from the authority); `decline`.
 async fn rescue_post(State(hub): State<Arc<Hub>>, Path(action): Path<String>, addr: Option<ConnectInfo<SocketAddr>>, headers: HeaderMap, body: Bytes) -> Response {
     if !local_caller(addr.as_ref(), &headers) {
         return not_local();
@@ -174,7 +174,8 @@ async fn rescue_post(State(hub): State<Arc<Hub>>, Path(action): Path<String>, ad
     let Some(r) = hub.rescue() else { return (StatusCode::NOT_FOUND, "this node runs no rescue agent (--rescue)\n").into_response() };
     let v: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
     let done = match action.as_str() {
-        "start" => r.start(),
+        // `{"paceMs": 4000}`: a demo's pace (the agent dwells on each phase); none: full speed
+        "start" => r.start(v["paceMs"].as_u64().unwrap_or(0)),
         "approve" => {
             let budget = match v["budget"].as_str().map(str::to_string).or_else(|| v["budget"].as_u64().map(|n| n.to_string())) {
                 Some(x) => match anp_authz::parse_amount_minor(&x) {

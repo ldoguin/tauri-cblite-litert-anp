@@ -481,7 +481,9 @@ their DIDs over HTTPS (each node behind a TLS front with a CA made for the run).
 
 The control room shows the store's cold room and its signed temperature log, the stock under its food-safety rules, the agent's log with
 the rule behind each decision, the duty manager's decision card, every company's quote and confirmation with the ledger, and the encrypted
-group. Its buttons drive the night by hand. The recording tools (`scripts/video/record.mjs`) take `--intro`, `--outro` and `--explainers`;
+group. Its buttons drive the night by hand. For a viewer the agent runs at a demo's pace (`POST /rescue/start {"paceMs": 4500}`: it dwells on
+each phase it enters, a third of that between repeated steps), so each caption comes in as the agent enters the phase it describes; tests
+and real use start it with no pace. The recording tools (`scripts/video/record.mjs`) take `--intro`, `--outro` and `--explainers`;
 the rescue uses `rescue-intro.html`, `rescue-outro.html` and `rescue-explainers.js`. Like the rest of the project, the store and the companies
 are fictional and the agent plans by rules; the protocol, signatures and encryption are real.
 
