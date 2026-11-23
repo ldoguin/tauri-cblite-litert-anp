@@ -111,6 +111,84 @@ fn euros(minor: u64) -> String {
     if c == 0 { format!("€{digits}{out}") } else { format!("€{digits}{out}.{c:02}") }
 }
 
+// ── an on-device model's advice ─────────────────────────────────────────────────────────────────────────────
+
+/// A model that can advise the planner: one completion for a system instruction and a prompt. Implemented by the node when it is built
+/// with LiteRT (`--rescue-model`), so nothing here depends on a model runtime. Blocking: called off the async workers.
+pub trait Advisor: Send + Sync {
+    fn name(&self) -> String;
+    fn complete(&self, system: &str, prompt: &str) -> Result<String, String>;
+}
+
+const ADVICE_SYSTEM: &str = "You plan the rescue of a supermarket's frozen stock. Answer with one JSON object and nothing else.";
+
+/// What the model proposes: a carrier offer and the cold-storage offers to use, in order, by quote id, and why.
+#[derive(Debug, Clone, PartialEq)]
+struct Proposal {
+    carrier: String,
+    storage: Vec<String>,
+    why: String,
+}
+
+/// The prompt: the need, the deadline, every carrier and warehouse offer by quote id, and the answer's shape.
+fn advice_prompt(carriers: &[(Company, Value)], warehouses: &[(Company, Value)], frozen: u32, deadline: u64) -> String {
+    let mut s = format!("{frozen} pallets of frozen food must be moved to cold storage; the first of them is lost in {deadline} minutes.\n\nCarrier offers:\n");
+    for (c, q) in carriers {
+        s.push_str(&format!(
+            "- id {}: {}, {}, takes {} pallets, arrives in {}\n",
+            q["id"].as_str().unwrap_or(""), c.name, euros(q["amountMinor"].as_u64().unwrap_or(0)), q["terms"]["pallets"], q["terms"]["arrivesIn"].as_str().unwrap_or("?")
+        ));
+    }
+    s.push_str("\nCold storage offers:\n");
+    for (c, q) in warehouses {
+        let pallets = q["terms"]["pallets"].as_u64().unwrap_or(1).max(1);
+        let amount = q["amountMinor"].as_u64().unwrap_or(0);
+        s.push_str(&format!("- id {}: {}, {} for {pallets} pallets ({} a pallet)\n", q["id"].as_str().unwrap_or(""), c.name, euros(amount), euros(amount / pallets)));
+    }
+    s.push_str("\nChoose one carrier that arrives in time and takes all the pallets, the cheapest such one unless there is a reason not to, and the cold storage offers to use, cheapest per pallet first, until the pallets are covered.\n");
+    s.push_str("Answer exactly in this form: {\"carrier\": \"<carrier offer id>\", \"storage\": [\"<storage offer id>\", ...], \"why\": \"<one short sentence>\"}");
+    s
+}
+
+/// Read the model's answer: the first JSON object in it.
+fn parse_proposal(text: &str) -> Result<Proposal, String> {
+    let (start, end) = (text.find('{').ok_or("no JSON object in the answer")?, text.rfind('}').ok_or("no JSON object in the answer")?);
+    if end < start {
+        return Err("no JSON object in the answer".into());
+    }
+    let v: Value = serde_json::from_str(&text[start..=end]).map_err(|e| format!("not JSON: {e}"))?;
+    let carrier = v["carrier"].as_str().filter(|s| !s.is_empty()).ok_or("no carrier")?.to_string();
+    let storage = v["storage"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default();
+    Ok(Proposal { carrier, storage, why: v["why"].as_str().unwrap_or("").trim().to_string() })
+}
+
+/// The rules a proposal must pass before the agent follows it. Every broken rule is named.
+fn vet(p: &Proposal, carriers: &[(Company, Value)], warehouses: &[(Company, Value)], frozen: u32, deadline: u64) -> Result<(), Vec<String>> {
+    let mut broken = vec![];
+    match carriers.iter().find(|(_, q)| q["id"].as_str() == Some(p.carrier.as_str())) {
+        None => broken.push(format!("{} is not one of the carrier offers", p.carrier)),
+        Some((c, q)) => {
+            let arrives = q["terms"]["arrivesIn"].as_str().and_then(minutes_of).unwrap_or(u64::MAX);
+            if arrives > deadline {
+                broken.push(format!("{} arrives in {arrives} min, after the first loss ({deadline} min)", c.name));
+            }
+            if (q["terms"]["pallets"].as_u64().unwrap_or(0) as u32) < frozen {
+                broken.push(format!("{} cannot take all {frozen} pallets", c.name));
+            }
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    for id in &p.storage {
+        if !warehouses.iter().any(|(_, q)| q["id"].as_str() == Some(id.as_str())) {
+            broken.push(format!("{id} is not one of the cold storage offers"));
+        }
+        if !seen.insert(id) {
+            broken.push(format!("{id} is used twice"));
+        }
+    }
+    if broken.is_empty() { Ok(()) } else { Err(broken) }
+}
+
 /// An offer the agent means to accept.
 #[derive(Debug, Clone)]
 struct Pick {
@@ -145,6 +223,8 @@ pub struct Rescue {
     /// A demo's pace: how long the agent dwells on each phase it enters (a third of it between repeated steps), so that a viewer
     /// and the captions can follow. 0 (tests, real use): no pause.
     pace_ms: std::sync::atomic::AtomicU64,
+    /// An on-device model that proposes the carrier and the cold storage; the rules decide whether to follow it.
+    advisor: Mutex<Option<Arc<dyn Advisor>>>,
     decided: tokio::sync::Notify,
 }
 
@@ -160,6 +240,7 @@ impl Rescue {
             state: Mutex::new(State { phase: "idle".into(), log: vec![], plan: vec![], approval: None, group: None, summary: None }),
             decision: Mutex::new(None),
             pace_ms: std::sync::atomic::AtomicU64::new(0),
+            advisor: Mutex::new(None),
             decided: tokio::sync::Notify::new(),
         }
     }
@@ -171,6 +252,7 @@ impl Rescue {
             "plan": s.plan.iter().map(|p| json!({ "company": p.company, "role": p.role, "category": p.category, "pallets": p.pallets, "amountMinor": p.amount_minor, "quote": p.quote_id })).collect::<Vec<_>>(),
             "directory": self.directory.lock().unwrap().iter().map(|c| json!({ "did": c.did, "role": c.role, "name": c.name })).collect::<Vec<_>>(),
             "discovery": if self.search.is_some() { "search agent" } else { "directory" },
+            "advisor": self.advisor.lock().unwrap().as_ref().map(|a| a.name()),
         })
     }
 
@@ -209,6 +291,55 @@ impl Rescue {
             }
         }
         *self.directory.lock().unwrap() = found;
+    }
+
+    /// Let an on-device model propose the carrier and the cold storage (the rules still decide).
+    pub fn set_advisor(&self, a: Arc<dyn Advisor>) {
+        *self.advisor.lock().unwrap() = Some(a);
+    }
+
+    /// Ask the model for a proposal and put it through the rules: `Some` only for one that passes every rule. Anything else (no
+    /// model, a failure, an answer that is not a plan, a plan that breaks a rule) is logged and the rules choose on their own.
+    async fn advise(&self, carriers: &[(Company, Value)], warehouses: &[(Company, Value)], frozen: u32, deadline: u64) -> Option<Proposal> {
+        const RULE: &str = "the model proposes, the rules decide";
+        let adv = self.advisor.lock().unwrap().clone()?;
+        let prompt = advice_prompt(carriers, warehouses, frozen, deadline);
+        self.note("choosing", &format!("asking the on-device model ({}) for a plan", adv.name()), None, json!({ "prompt": prompt }));
+        let started = std::time::Instant::now();
+        let a = adv.clone();
+        let answer = tokio::task::spawn_blocking(move || a.complete(ADVICE_SYSTEM, &prompt)).await.map_err(|e| e.to_string()).and_then(|r| r);
+        let secs = started.elapsed().as_secs_f32();
+        let text = match answer {
+            Ok(t) => t,
+            Err(e) => {
+                self.note("choosing", &format!("the model failed ({e}): the rules choose"), Some(RULE), Value::Null);
+                return None;
+            }
+        };
+        let p = match parse_proposal(&text) {
+            Ok(p) => p,
+            Err(e) => {
+                self.note("choosing", &format!("the model's answer is not a plan ({e}): the rules choose"), Some(RULE), json!({ "answer": text, "seconds": secs }));
+                return None;
+            }
+        };
+        let name = |id: &str, offers: &[(Company, Value)]| offers.iter().find(|(_, q)| q["id"].as_str() == Some(id)).map(|(c, _)| c.name.clone()).unwrap_or_else(|| id.to_string());
+        let storage: Vec<String> = p.storage.iter().map(|id| name(id, warehouses)).collect();
+        match vet(&p, carriers, warehouses, frozen, deadline) {
+            Ok(()) => {
+                self.note(
+                    "choosing",
+                    &format!("the model proposes {} with {} ({:.0} s): \"{}\"; every rule holds, the agent follows it", name(&p.carrier, carriers), if storage.is_empty() { "no storage named".to_string() } else { storage.join(" then ") }, secs, p.why),
+                    Some(RULE),
+                    json!({ "answer": text, "seconds": secs }),
+                );
+                Some(p)
+            }
+            Err(broken) => {
+                self.note("choosing", &format!("the model proposed {}, but {}: the rules choose", name(&p.carrier, carriers), broken.join("; ")), Some(RULE), json!({ "answer": text, "seconds": secs }));
+                None
+            }
+        }
     }
 
     /// Enter a phase and, at a demo's pace, dwell on it before working.
@@ -391,19 +522,33 @@ impl Rescue {
                 }
             }
             fit.sort_by_key(|o| o.1["amountMinor"].as_u64().unwrap_or(u64::MAX));
-            let Some(carrier) = fit.first() else {
+            let Some(cheapest) = fit.first().copied() else {
                 self.note("choosing", "no carrier can arrive in time: the frozen stock cannot be moved", Some("arrive before the goods are lost"), Value::Null);
                 return self.finish(plan, at_stake).await;
             };
-            for o in fit.iter().skip(1) {
-                self.note("choosing", &format!("{} costs {} more than {}: not chosen", o.0.name, euros(o.1["amountMinor"].as_u64().unwrap_or(0) - carrier.1["amountMinor"].as_u64().unwrap_or(0)), carrier.0.name), Some("cheapest carrier that arrives in time"), Value::Null);
+            // the on-device model, if there is one, proposes; only a proposal that passes every rule is followed
+            let advice = self.advise(&carriers, &warehouses, frozen, deadline).await;
+            let carrier = advice.as_ref().and_then(|a| fit.iter().find(|o| o.1["id"].as_str() == Some(a.carrier.as_str())).copied()).unwrap_or(cheapest);
+            for o in fit.iter().filter(|o| o.1["id"] != carrier.1["id"]) {
+                let (theirs, ours) = (o.1["amountMinor"].as_u64().unwrap_or(0), carrier.1["amountMinor"].as_u64().unwrap_or(0));
+                let text = if theirs >= ours {
+                    format!("{} costs {} more than {}: not chosen", o.0.name, euros(theirs - ours), carrier.0.name)
+                } else {
+                    format!("{} costs {} less than {}, which the model chose: not chosen", o.0.name, euros(ours - theirs), carrier.0.name)
+                };
+                let rule = if advice.is_some() { "the model proposes, the rules decide" } else { "cheapest carrier that arrives in time" };
+                self.note("choosing", &text, Some(rule), Value::Null);
             }
             let transport = Self::pick(&carrier.0, &carrier.1, "transport");
 
-            // storage: cheapest per pallet first; if the room offered falls short, ask the others for the rest
+            // storage: cheapest per pallet first (or in the model's order); if the room offered falls short, ask the others for the rest
             let per_pallet = |q: &Value| q["amountMinor"].as_u64().unwrap_or(0) / q["terms"]["pallets"].as_u64().unwrap_or(1).max(1);
             let mut offers: Vec<(Company, Value)> = warehouses.clone();
             offers.sort_by_key(|o| per_pallet(&o.1));
+            if let Some(a) = &advice {
+                let rank = |q: &Value| a.storage.iter().position(|id| q["id"].as_str() == Some(id.as_str())).unwrap_or(usize::MAX);
+                offers.sort_by_key(|o| rank(&o.1)); // stable: offers the model did not name keep their order, after the ones it did
+            }
             let mut storage: Vec<Pick> = vec![];
             let mut covered = 0u32;
             let mut used: Vec<String> = vec![];
@@ -588,6 +733,54 @@ mod tests {
         assert_eq!(n.deadline_min, Some(44));
         assert_eq!(n.lost, ["FZ-ICE"]);
         assert_eq!(n.lost_pallets, 2);
+    }
+
+    fn offers() -> (Vec<(Company, Value)>, Vec<(Company, Value)>) {
+        let c = |name: &str, role: &str| Company { did: format!("did:wba:x:{name}"), role: role.into(), name: name.into() };
+        let carriers = vec![
+            (c("FrostLine", "carrier"), json!({ "id": "q-frost", "amountMinor": 940_000, "terms": { "pallets": 3, "arrivesIn": "35 min" } })),
+            (c("ColdChain", "carrier"), json!({ "id": "q-cold", "amountMinor": 540_000, "terms": { "pallets": 3, "arrivesIn": "40 min" } })),
+            (c("SlowVan", "carrier"), json!({ "id": "q-slow", "amountMinor": 100_000, "terms": { "pallets": 3, "arrivesIn": "90 min" } })),
+        ];
+        let warehouses = vec![
+            (c("Rungis", "warehouse"), json!({ "id": "q-rungis", "amountMinor": 180_000, "terms": { "pallets": 2, "partial": true } })),
+            (c("Orly", "warehouse"), json!({ "id": "q-orly", "amountMinor": 450_000, "terms": { "pallets": 3 } })),
+        ];
+        (carriers, warehouses)
+    }
+
+    #[test]
+    fn a_proposal_is_read_from_the_models_answer_whatever_surrounds_it() {
+        let p = parse_proposal("Sure! {\"carrier\": \"q-cold\", \"storage\": [\"q-rungis\", \"q-orly\"], \"why\": \"cheapest in time\"} Done.").unwrap();
+        assert_eq!(p, Proposal { carrier: "q-cold".into(), storage: vec!["q-rungis".into(), "q-orly".into()], why: "cheapest in time".into() });
+        assert!(parse_proposal("I would pick ColdChain.").is_err());
+        assert!(parse_proposal("{\"storage\": []}").is_err(), "no carrier");
+        assert!(parse_proposal("{not json}").is_err());
+    }
+
+    #[test]
+    fn a_proposal_must_pass_every_rule() {
+        let (carriers, warehouses) = offers();
+        let p = |carrier: &str, storage: &[&str]| Proposal { carrier: carrier.into(), storage: storage.iter().map(|s| s.to_string()).collect(), why: String::new() };
+        assert!(vet(&p("q-cold", &["q-rungis", "q-orly"]), &carriers, &warehouses, 3, 44).is_ok());
+        assert!(vet(&p("q-frost", &[]), &carriers, &warehouses, 3, 44).is_ok(), "a dearer carrier that arrives in time is the model's call");
+        let late = vet(&p("q-slow", &["q-rungis"]), &carriers, &warehouses, 3, 44).unwrap_err();
+        assert!(late[0].contains("after the first loss"), "{late:?}");
+        assert!(vet(&p("q-cold", &[]), &carriers, &warehouses, 4, 44).unwrap_err()[0].contains("cannot take all 4"));
+        assert!(vet(&p("q-made-up", &[]), &carriers, &warehouses, 3, 44).unwrap_err()[0].contains("not one of the carrier offers"));
+        let twice = vet(&p("q-cold", &["q-orly", "q-orly", "q-nope"]), &carriers, &warehouses, 3, 44).unwrap_err();
+        assert!(twice.iter().any(|b| b.contains("used twice")) && twice.iter().any(|b| b.contains("q-nope")), "{twice:?}");
+    }
+
+    #[test]
+    fn the_prompt_lists_every_offer_by_id_with_what_the_rules_look_at() {
+        let (carriers, warehouses) = offers();
+        let s = advice_prompt(&carriers, &warehouses, 3, 44);
+        assert!(s.contains("3 pallets") && s.contains("44 minutes"));
+        for id in ["q-frost", "q-cold", "q-slow", "q-rungis", "q-orly"] {
+            assert!(s.contains(id), "{id}");
+        }
+        assert!(s.contains("arrives in 40 min") && s.contains("€900 a pallet") && s.contains("\"carrier\""));
     }
 
     #[test]

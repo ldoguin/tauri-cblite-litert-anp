@@ -167,6 +167,11 @@ fn search_rpc(method: &str, params: Value) -> Value {
 /// front with a CA made for the run), the companies register their signed descriptions with a search agent, and the store's agent finds
 /// them there. Every node resolves the DIDs it meets over HTTPS. The one thing every resolver is given is the test CA.
 pub fn bring_up_discovered(work: &Path) -> Result<Night, String> {
+    bring_up_discovered_with(work, &[])
+}
+
+/// [`bring_up_discovered`], with more options for the store's node (an adviser model, ...).
+pub fn bring_up_discovered_with(work: &Path, extra_store: &[String]) -> Result<Night, String> {
     println!("Ten nodes and a search agent; every DID resolved over HTTPS, nothing handed out");
     let root = root_key(work, "retailer");
     let work = work.to_path_buf();
@@ -222,6 +227,7 @@ pub fn bring_up_discovered(work: &Path) -> Result<Night, String> {
     let store_args = [
         node(STORE),
         strs(&["--store-sim", "0", "--spend-token", &token.display().to_string(), "--spend-root", &root, "--budget", "6000", "--site", "store-0412", "--rescue-search", &search_url]),
+        extra_store.to_vec(),
     ]
     .concat();
     let store = Node::start(&work, "store", "store", STORE, &store_args);
@@ -261,6 +267,58 @@ pub fn run_discovered() -> Result<i32, String> {
         c.check(&format!("the agent found {n} {role}(s) through the search agent"), logged(&r, &format!("{n} {role}(s) found"), None), "");
     }
     c.check("and talked to all eight without having been given any DID document (resolved over HTTPS)", r["directory"].as_array().map_or(0, |d| d.len()) == 8, r["directory"].to_string());
+
+    store.kill();
+    for n in &mut nodes {
+        n.kill();
+    }
+    Ok(c.finish())
+}
+
+/// `cargo xtask e2e-model --model FILE.litertlm`: the night with discovery and an on-device model advising the agent (a LiteRT build of the
+/// node: Linux or macOS, for example in WSL). The model proposes the carrier and the cold storage; the rules decide. It may choose otherwise
+/// than the rules would, so this checks the protocol around it, not its taste: it was asked; its proposal was either followed with every rule
+/// holding, or set aside with the rule it broke; and every deal the agent made was confirmed by its company and audits.
+pub fn run_model(args: &[String]) -> Result<i32, String> {
+    let model = opt(args, "--model").ok_or("give the model: --model FILE.litertlm")?;
+    require_bins(&["anp-node", "anp-admin", "anp-search"])?;
+    let work = work_dir("xtask-model");
+    fresh_dir(&work);
+    let mut c = Checks::default();
+    let night = bring_up_discovered_with(&work, &strs(&["--rescue-model", &model]))?;
+    let (mut store, mut nodes) = (night.store, night.others);
+    // the node loads the model before it serves anything: that takes a while
+    let up = poll(600, 500, || rescue()["phase"] == "idle");
+    let r = rescue();
+    c.check("the store's agent is up with the model as its adviser", up && r["advisor"].is_string(), format!("{}", r["advisor"]));
+
+    println!("The night");
+    act("/store/sim/fault", json!({ "unit": "frz-1", "fault": "defrost-stuck" }));
+    act("/store/sim/fault", json!({ "unit": "chl-1", "fault": "compressor-off" }));
+    act("/store/sim/advance", json!({ "minutes": 50 }));
+    act("/store/sim/fault", json!({ "unit": "frz-2", "fault": "defrost-stuck" }));
+    act("/store/sim/advance", json!({ "minutes": 1 }));
+    let (code, _) = act("/rescue/start", json!({}));
+    c.check("the agent starts", code == 200, code.to_string());
+    let phase = wait_phase(&["awaiting-approval", "done", "failed"], 900);
+    let r = rescue();
+    const RULE: &str = "the model proposes, the rules decide";
+    c.check("it asked the on-device model for a plan", logged(&r, "asking the on-device model", None), "");
+    let verdict = r["log"].as_array().and_then(|l| l.iter().find(|e| e["rule"] == RULE && !e["text"].as_str().unwrap_or("").contains("not chosen")).cloned()).unwrap_or(Value::Null);
+    let followed = verdict["text"].as_str().map_or(false, |t| t.contains("every rule holds"));
+    let set_aside = verdict["text"].as_str().map_or(false, |t| t.contains("the rules choose"));
+    c.check("the model's answer went through the rules: followed with every rule holding, or set aside with the reason", followed || set_aside, verdict.to_string());
+    c.note(&format!("the model said: {}", verdict["data"]["answer"].as_str().unwrap_or("(nothing)").replace('\n', " ")));
+    c.note(&format!("{} in {:.0} s", if followed { "followed" } else { "set aside" }, verdict["data"]["seconds"].as_f64().unwrap_or(0.0)));
+    c.check("the plan still went to the duty manager over the budget", phase == "awaiting-approval", phase.clone());
+    let (code, _) = act("/rescue/approve", json!({ "budget": "20000" }));
+    c.check("the duty manager approves", code == 200, code.to_string());
+    let phase = wait_phase(&["done", "failed"], 300);
+    let r = rescue();
+    c.check("the rescue completes", phase == "done", format!("{phase} {}", r["log"].as_array().and_then(|l| l.last()).cloned().unwrap_or_default()));
+    let s = &r["summary"];
+    c.check("every deal the agent made was confirmed by its company, and audits", s["confirmed"].as_u64().unwrap_or(0) >= 4 && s["audited"] == s["confirmed"], s.to_string());
+    c.note(&format!("spent €{}", s["spentMinor"].as_u64().unwrap_or(0) / 100));
 
     store.kill();
     for n in &mut nodes {

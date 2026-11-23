@@ -95,6 +95,29 @@ impl LlmExecutor {
     pub fn description(&self) -> String {
         self.instruction.lines().next().unwrap_or_default().to_string()
     }
+
+    /// One completion, start to end, outside any A2A task: `system` and `user` as one ChatML exchange on a raw session (what the
+    /// Qwen family needs), greedy on the GPU and near-greedy on the CPU (a planner should answer the same way twice). Thinking
+    /// (`<think>…</think>`, or Qwen3's thought channel) is left out of the answer. Blocking and CPU-heavy: call it off the async workers.
+    pub fn complete(&self, system: &str, user: &str) -> Result<String, String> {
+        let _turn = self.gate.lock().unwrap();
+        let params = if self.gpu { SamplerParams::default().greedy() } else { SamplerParams::default().temperature(0.1).top_k(1).top_p(1.0) };
+        let prompt = format!("<|im_start|>system\n{system}<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n");
+        let mut session = self.engine.create_session(params).map_err(|e| format!("create_session: {e}"))?;
+        let mut answer = String::new();
+        let mut in_think = false;
+        session
+            .generate_stream(&prompt, |c| {
+                let (is_thought, text) = classify(c);
+                let (is_thought, text) = if is_thought { (true, text) } else { think_filter(&mut in_think, text) };
+                if !is_thought {
+                    answer.push_str(&text);
+                }
+                true
+            })
+            .map_err(|e| format!("generation: {e}"))?;
+        Ok(answer.trim().to_string())
+    }
 }
 
 impl Executor for LlmExecutor {

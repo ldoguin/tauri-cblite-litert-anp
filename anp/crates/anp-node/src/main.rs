@@ -90,6 +90,8 @@ struct Args {
     register_with: Option<String>,
     /// Advertise this address as the DID document's message service (instead of https://<did host>/anp/direct).
     message_endpoint: Option<String>,
+    /// An on-device model (`.litertlm`) that proposes the rescue agent's carrier and cold storage; the rules decide (LiteRT builds only).
+    rescue_model: Option<String>,
     /// Run the group host without `--require-auth`: anyone who can reach it can collect any device's notifications.
     group_open_mailboxes: bool,
     /// DIDs this node trusts (DID mode), repeatable.
@@ -160,6 +162,7 @@ fn parse_args() -> Result<Args, String> {
         rescue_search: None,
         register_with: None,
         message_endpoint: None,
+        rescue_model: None,
         group_open_mailboxes: false,
         trust_dids: vec![],
         print_did: false,
@@ -236,6 +239,7 @@ fn parse_args() -> Result<Args, String> {
         "--rescue-search" => a.rescue_search = Some(v()?),
         "--register-with" => a.register_with = Some(v()?),
         "--message-endpoint" => a.message_endpoint = Some(v()?),
+        "--rescue-model" => a.rescue_model = Some(v()?),
         "--store-sim" =>a.store_sim = Some(v()?.parse().map_err(|e| format!("--store-sim wants simulated minutes per second (0 = manual): {e}"))?),
         "--group-member" => {
                 a.group_member = Some(v()?);
@@ -262,7 +266,7 @@ fn parse_args() -> Result<Args, String> {
                 a.secure = true;
             }
             "-h" | "--help" => {
-                return Err("usage: anp-node [--name N] [--id ID] [--data DIR] [--http-port P] [--p2p-port P] [--connect ws://host:port/a2a]...\n       LLM agent (build with --features litert, Linux/macOS): [--model FILE.litertlm] [--role R] [--persona TEXT] [--max-tokens N]\n       Security: [--secure] [--trust trust.json] [--trust-peer name=PUBKEY]... [--print-pubkey]\n       Biscuit:  [--root-key ROOT_PUBKEY --token FILE [--revoked FILE]]  (tokens come from anp-admin)\n       Built-in agent: [--agent echo|reviewer|claims|writer]\n       DID (ANP): [--did-host HOST[:PORT] [--trust-did DID]... [--print-did] [--e2ee] [--handle LOCAL]... [--meta-protocol NAME[=FILE]]... [--group-host [--group-open-mailboxes]] [--group-member HOST_URL]]\n       Cold-stock scenario: [--store-sim MIN_PER_SEC]  (simulated store 0412; its temperature log is signed and replicated; needs a secure mode)\n       Quotes (need --direct-messaging): [--counterparty frostline|polar|coldchain|rungis-cold|orly-freeze|foodbank|insurer|supplier --buyer-root ROOT_PUBKEY...]\n                                         [--spend-token FILE --spend-root ROOT_PUBKEY --budget EUROS [--site NAME]]\n       The store's agent: [--rescue DIRECTORY.json | --rescue-search SEARCH_RPC_URL]  (needs --store-sim and --spend-token; uses --group-member when given)\n       Discovery: [--register-with SEARCH_RPC_URL] [--message-endpoint URL]\n       Domains: [--trust-domain HOST[:PORT]]... [--resolver-roots CA.pem] [--resolver-allow-private]  (DIDs of a trusted domain are fetched over HTTPS)\n       Direct messages (ANP-09 P5): [--direct-messaging [--direct-peer DID=URL]...]  (needs --e2ee; peers are the --allow-caller documents)\n       ANP-02: [--require-auth [--public-origin https://HOST[:PORT]] [--allow-caller DID_DOC.json]... [--allow-legacy-auth]]\n       Transport/at rest: [--tls] [--pin-cert PEM] [--admit] [--db-key-env VAR]".into())
+                return Err("usage: anp-node [--name N] [--id ID] [--data DIR] [--http-port P] [--p2p-port P] [--connect ws://host:port/a2a]...\n       LLM agent (build with --features litert, Linux/macOS): [--model FILE.litertlm] [--role R] [--persona TEXT] [--max-tokens N]\n       Security: [--secure] [--trust trust.json] [--trust-peer name=PUBKEY]... [--print-pubkey]\n       Biscuit:  [--root-key ROOT_PUBKEY --token FILE [--revoked FILE]]  (tokens come from anp-admin)\n       Built-in agent: [--agent echo|reviewer|claims|writer]\n       DID (ANP): [--did-host HOST[:PORT] [--trust-did DID]... [--print-did] [--e2ee] [--handle LOCAL]... [--meta-protocol NAME[=FILE]]... [--group-host [--group-open-mailboxes]] [--group-member HOST_URL]]\n       Cold-stock scenario: [--store-sim MIN_PER_SEC]  (simulated store 0412; its temperature log is signed and replicated; needs a secure mode)\n       Quotes (need --direct-messaging): [--counterparty frostline|polar|coldchain|rungis-cold|orly-freeze|foodbank|insurer|supplier --buyer-root ROOT_PUBKEY...]\n                                         [--spend-token FILE --spend-root ROOT_PUBKEY --budget EUROS [--site NAME]]\n       The store's agent: [--rescue DIRECTORY.json | --rescue-search SEARCH_RPC_URL]  (needs --store-sim and --spend-token; uses --group-member when given)\n       Discovery: [--register-with SEARCH_RPC_URL] [--message-endpoint URL]\n       The agent's adviser (LiteRT builds, Linux/macOS): [--rescue-model FILE.litertlm]  (proposes the carrier and storage; the rules decide)\n       Domains: [--trust-domain HOST[:PORT]]... [--resolver-roots CA.pem] [--resolver-allow-private]  (DIDs of a trusted domain are fetched over HTTPS)\n       Direct messages (ANP-09 P5): [--direct-messaging [--direct-peer DID=URL]...]  (needs --e2ee; peers are the --allow-caller documents)\n       ANP-02: [--require-auth [--public-origin https://HOST[:PORT]] [--allow-caller DID_DOC.json]... [--allow-legacy-auth]]\n       Transport/at rest: [--tls] [--pin-cert PEM] [--admit] [--db-key-env VAR]".into())
             }
             other => return Err(format!("unknown argument {other}")),
         }
@@ -337,6 +341,36 @@ fn spawn_p2p(db: Database, sec: P2pSecurity, port: u16, connect: Vec<String>) ->
     let (p, urls) = ready_rx.recv().map_err(|e| e.to_string())??;
     Ok((Arc::new(NodeLink { tx: Mutex::new(tx), up: AtomicBool::new(true) }), p, urls))
 }
+/// The rescue agent's adviser: an on-device model behind LiteRT-LM, one completion per question.
+#[cfg(all(feature = "litert", not(windows)))]
+struct ModelAdvisor {
+    llm: anp_cblite::llm::LlmExecutor,
+    name: String,
+}
+
+#[cfg(all(feature = "litert", not(windows)))]
+impl anp_cblite::rescue::Advisor for ModelAdvisor {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+    fn complete(&self, system: &str, prompt: &str) -> Result<String, String> {
+        self.llm.complete(system, prompt)
+    }
+}
+
+#[cfg(all(feature = "litert", not(windows)))]
+fn load_advisor(model: &str, data: &std::path::Path) -> Result<Arc<dyn anp_cblite::rescue::Advisor>, String> {
+    let cache = data.join("litert-cache-planner");
+    let llm = anp_cblite::llm::LlmExecutor::load(model, "planner".into(), "Plans the cold-stock rescue".into(), Some(4096), cache.to_str(), false, true)?;
+    let name = std::path::Path::new(model).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| model.to_string());
+    Ok(Arc::new(ModelAdvisor { llm, name }))
+}
+
+#[cfg(not(all(feature = "litert", not(windows))))]
+fn load_advisor(_model: &str, _data: &std::path::Path) -> Result<Arc<dyn anp_cblite::rescue::Advisor>, String> {
+    Err("--rescue-model needs a build with `--features litert` on Linux or macOS (Google ships no LiteRT-LM runtime for Windows)".into())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
@@ -614,6 +648,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             None => vec![],
         };
         hub.set_rescue(directory, args.rescue_search.clone())?;
+    }
+    if let Some(model) = &args.rescue_model {
+        let rescue = hub.rescue().ok_or("--rescue-model advises the rescue agent: give --rescue or --rescue-search too")?;
+        rescue.set_advisor(load_advisor(model, &args.data)?);
     }
     if let Some(search) = &args.register_with {
         // the description is served at https://<did host>/agents/<name>/ad.json; the search agent fetches and verifies it there
