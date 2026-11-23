@@ -258,7 +258,8 @@ async function autoplay() {
   await caption("Then freezer 2 fails too: €17,800 of frozen meat and fish, about 45 minutes from being lost.");
   await sleep(5000);
   await act("/rescue/start", {});
-  await caption("The store's agent takes over: it ranks the stock by risk and value, and asks every company it may call on at once.");
+  await caption("The store's agent takes over: it finds companies it has never dealt with through a search agent, and asks them all at once.");
+  await until((s) => s.rescue && ["asking", "choosing", "awaiting-approval", "done"].includes(s.rescue.phase));
   await until((s) => s.rescue && ["choosing", "awaiting-approval", "done"].includes(s.rescue.phase));
   await caption("Quotes come back, each signed by its company's DID. The agent chooses through rules that sit between its plan and its signature.");
   await until((s) => s.rescue && ["awaiting-approval", "done"].includes(s.rescue.phase));

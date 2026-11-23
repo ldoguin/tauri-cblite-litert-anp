@@ -134,6 +134,28 @@ impl Node {
         n
     }
 
+    /// Another of the project's programs (`anp-search`, ...) under the same supervision: `args` as given, output in
+    /// `<work>/<dir>.out.txt` and `.err.txt`; returns once it has printed a line or exited (or after 10 s).
+    pub fn start_program(work: &Path, program: &str, dir: &str, args: &[String]) -> Node {
+        let out = work.join(format!("{dir}.out.txt"));
+        let err = work.join(format!("{dir}.err.txt"));
+        let child = Command::new(bin(program))
+            .args(args)
+            .env("RUST_LOG", "warn")
+            .stdout(std::fs::File::create(&out).expect("program output file"))
+            .stderr(std::fs::File::create(&err).expect("program error file"))
+            .spawn()
+            .unwrap_or_else(|e| panic!("start {program}: {e}"));
+        let mut n = Node { child: Some(child), out };
+        for _ in 0..50 {
+            if std::fs::read_to_string(&n.out).map_or(0, |t| t.lines().count()) >= 1 || n.exited() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        n
+    }
+
     fn exited(&mut self) -> bool {
         self.child.as_mut().map_or(true, |c| matches!(c.try_wait(), Ok(Some(_))))
     }

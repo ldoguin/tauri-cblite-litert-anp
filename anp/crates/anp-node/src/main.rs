@@ -84,6 +84,12 @@ struct Args {
     site: Option<String>,
     /// Run the store's rescue agent, with this directory of companies it may call on.
     rescue: Option<PathBuf>,
+    /// Run it finding the companies through this search agent (its JSON-RPC URL) instead.
+    rescue_search: Option<String>,
+    /// Register this node's agent description with this search agent when it starts.
+    register_with: Option<String>,
+    /// Advertise this address as the DID document's message service (instead of https://<did host>/anp/direct).
+    message_endpoint: Option<String>,
     /// Run the group host without `--require-auth`: anyone who can reach it can collect any device's notifications.
     group_open_mailboxes: bool,
     /// DIDs this node trusts (DID mode), repeatable.
@@ -151,6 +157,9 @@ fn parse_args() -> Result<Args, String> {
         budget: None,
         site: None,
         rescue: None,
+        rescue_search: None,
+        register_with: None,
+        message_endpoint: None,
         group_open_mailboxes: false,
         trust_dids: vec![],
         print_did: false,
@@ -224,6 +233,9 @@ fn parse_args() -> Result<Args, String> {
         "--budget" => a.budget = Some(v()?),
         "--site" => a.site = Some(v()?),
         "--rescue" => a.rescue = Some(PathBuf::from(v()?)),
+        "--rescue-search" => a.rescue_search = Some(v()?),
+        "--register-with" => a.register_with = Some(v()?),
+        "--message-endpoint" => a.message_endpoint = Some(v()?),
         "--store-sim" =>a.store_sim = Some(v()?.parse().map_err(|e| format!("--store-sim wants simulated minutes per second (0 = manual): {e}"))?),
         "--group-member" => {
                 a.group_member = Some(v()?);
@@ -250,7 +262,7 @@ fn parse_args() -> Result<Args, String> {
                 a.secure = true;
             }
             "-h" | "--help" => {
-                return Err("usage: anp-node [--name N] [--id ID] [--data DIR] [--http-port P] [--p2p-port P] [--connect ws://host:port/a2a]...\n       LLM agent (build with --features litert, Linux/macOS): [--model FILE.litertlm] [--role R] [--persona TEXT] [--max-tokens N]\n       Security: [--secure] [--trust trust.json] [--trust-peer name=PUBKEY]... [--print-pubkey]\n       Biscuit:  [--root-key ROOT_PUBKEY --token FILE [--revoked FILE]]  (tokens come from anp-admin)\n       Built-in agent: [--agent echo|reviewer|claims|writer]\n       DID (ANP): [--did-host HOST[:PORT] [--trust-did DID]... [--print-did] [--e2ee] [--handle LOCAL]... [--meta-protocol NAME[=FILE]]... [--group-host [--group-open-mailboxes]] [--group-member HOST_URL]]\n       Cold-stock scenario: [--store-sim MIN_PER_SEC]  (simulated store 0412; its temperature log is signed and replicated; needs a secure mode)\n       Quotes (need --direct-messaging): [--counterparty frostline|polar|coldchain|rungis-cold|orly-freeze|foodbank|insurer|supplier --buyer-root ROOT_PUBKEY...]\n                                         [--spend-token FILE --spend-root ROOT_PUBKEY --budget EUROS [--site NAME]]\n       The store's agent: [--rescue DIRECTORY.json]  (needs --store-sim and --spend-token; uses --group-member when given)\n       Domains: [--trust-domain HOST[:PORT]]... [--resolver-roots CA.pem] [--resolver-allow-private]  (DIDs of a trusted domain are fetched over HTTPS)\n       Direct messages (ANP-09 P5): [--direct-messaging [--direct-peer DID=URL]...]  (needs --e2ee; peers are the --allow-caller documents)\n       ANP-02: [--require-auth [--public-origin https://HOST[:PORT]] [--allow-caller DID_DOC.json]... [--allow-legacy-auth]]\n       Transport/at rest: [--tls] [--pin-cert PEM] [--admit] [--db-key-env VAR]".into())
+                return Err("usage: anp-node [--name N] [--id ID] [--data DIR] [--http-port P] [--p2p-port P] [--connect ws://host:port/a2a]...\n       LLM agent (build with --features litert, Linux/macOS): [--model FILE.litertlm] [--role R] [--persona TEXT] [--max-tokens N]\n       Security: [--secure] [--trust trust.json] [--trust-peer name=PUBKEY]... [--print-pubkey]\n       Biscuit:  [--root-key ROOT_PUBKEY --token FILE [--revoked FILE]]  (tokens come from anp-admin)\n       Built-in agent: [--agent echo|reviewer|claims|writer]\n       DID (ANP): [--did-host HOST[:PORT] [--trust-did DID]... [--print-did] [--e2ee] [--handle LOCAL]... [--meta-protocol NAME[=FILE]]... [--group-host [--group-open-mailboxes]] [--group-member HOST_URL]]\n       Cold-stock scenario: [--store-sim MIN_PER_SEC]  (simulated store 0412; its temperature log is signed and replicated; needs a secure mode)\n       Quotes (need --direct-messaging): [--counterparty frostline|polar|coldchain|rungis-cold|orly-freeze|foodbank|insurer|supplier --buyer-root ROOT_PUBKEY...]\n                                         [--spend-token FILE --spend-root ROOT_PUBKEY --budget EUROS [--site NAME]]\n       The store's agent: [--rescue DIRECTORY.json | --rescue-search SEARCH_RPC_URL]  (needs --store-sim and --spend-token; uses --group-member when given)\n       Discovery: [--register-with SEARCH_RPC_URL] [--message-endpoint URL]\n       Domains: [--trust-domain HOST[:PORT]]... [--resolver-roots CA.pem] [--resolver-allow-private]  (DIDs of a trusted domain are fetched over HTTPS)\n       Direct messages (ANP-09 P5): [--direct-messaging [--direct-peer DID=URL]...]  (needs --e2ee; peers are the --allow-caller documents)\n       ANP-02: [--require-auth [--public-origin https://HOST[:PORT]] [--allow-caller DID_DOC.json]... [--allow-legacy-auth]]\n       Transport/at rest: [--tls] [--pin-cert PEM] [--admit] [--db-key-env VAR]".into())
             }
             other => return Err(format!("unknown argument {other}")),
         }
@@ -353,7 +365,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut extra = vec![];
                 if args.direct_messaging {
                     let origin = format!("https://{host}{}", port.map(|p| format!(":{p}")).unwrap_or_default());
-                    extra.push(serde_json::json!({ "id": "#message", "type": "ANPMessageService", "serviceEndpoint": format!("{origin}/anp/direct") }));
+                    let endpoint = args.message_endpoint.clone().unwrap_or_else(|| format!("{origin}/anp/direct"));
+                    extra.push(serde_json::json!({ "id": "#message", "type": "ANPMessageService", "serviceEndpoint": endpoint }));
                 }
                 // WNS handles this node provides: the DID document names the provider for each (the reverse half of the binding)
                 for (i, local) in args.handles.iter().enumerate() {
@@ -477,9 +490,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     };
 
+    // a counterparty says what it does in its card, and so in its signed agent description, which a search agent indexes
+    let description = match args.counterparty.as_deref().and_then(anp_cblite::discovery::profile_description) {
+        Some(d) => d,
+        None => description,
+    };
     let http = tokio::net::TcpListener::bind(("0.0.0.0", args.http_port)).await?;
     let base_url = format!("http://127.0.0.1:{}", http.local_addr()?.port());
-    let card = default_card(&args.name, &description, &base_url);
+    // ...and under its company's name (the node keeps its own name and id; this is what the card and description show)
+    let display_name = args.counterparty.as_deref().and_then(anp_cblite::discovery::profile_name).unwrap_or_else(|| args.name.clone());
+    let card = default_card(&display_name, &description, &base_url);
     let hub: Arc<Hub> = Hub::start(docs, args.id.clone(), card, executor).await?;
 
     // Keep `p2p` alive for the life of the process (it stops on drop).
@@ -584,10 +604,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         hub.set_group_member(anp_cblite::group_member::GroupMember::new(t, url, &args.data, peer_docs.clone(), domain_trust.clone())?);
     }
-    if let Some(f) = &args.rescue {
-        let text = std::fs::read_to_string(f).map_err(|e| format!("{}: {e}", f.display()))?;
-        let dir: serde_json::Value = serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|e| format!("{}: {e}", f.display()))?;
-        hub.set_rescue(anp_cblite::rescue::read_directory(&dir)?)?;
+    if args.rescue.is_some() || args.rescue_search.is_some() {
+        let directory = match &args.rescue {
+            Some(f) => {
+                let text = std::fs::read_to_string(f).map_err(|e| format!("{}: {e}", f.display()))?;
+                let dir: serde_json::Value = serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|e| format!("{}: {e}", f.display()))?;
+                anp_cblite::rescue::read_directory(&dir)?
+            }
+            None => vec![],
+        };
+        hub.set_rescue(directory, args.rescue_search.clone())?;
+    }
+    if let Some(search) = &args.register_with {
+        // the description is served at https://<did host>/agents/<name>/ad.json; the search agent fetches and verifies it there
+        let host = args.did_host.as_deref().ok_or("--register-with needs DID mode (--did-host): the search agent verifies the description against the DID")?;
+        let ad_url = format!("https://{host}/agents/{}/ad.json", args.name);
+        tokio::spawn(anp_cblite::discovery::register_until_done(search.clone(), ad_url));
     }
     hub.set_posture(serde_json::json!({
         "tls": args.tls,

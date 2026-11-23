@@ -132,7 +132,10 @@ struct State {
 }
 
 pub struct Rescue {
-    directory: Vec<Company>,
+    /// The companies it may call on: given (`--rescue DIRECTORY.json`), or found through the search agent at the start of each rescue.
+    directory: Mutex<Vec<Company>>,
+    /// The search agent's JSON-RPC URL, when companies are found there (`--rescue-search`).
+    search: Option<String>,
     store: Arc<ColdStoreSim>,
     buyer: Arc<QuoteBuyer>,
     group: Option<Arc<GroupMember>>,
@@ -143,9 +146,11 @@ pub struct Rescue {
 }
 
 impl Rescue {
-    pub fn new(directory: Vec<Company>, store: Arc<ColdStoreSim>, buyer: Arc<QuoteBuyer>, group: Option<Arc<GroupMember>>) -> Rescue {
+    /// `directory`: the companies it may call on; with `search`, they are found through that search agent instead, at each start.
+    pub fn new(directory: Vec<Company>, search: Option<String>, store: Arc<ColdStoreSim>, buyer: Arc<QuoteBuyer>, group: Option<Arc<GroupMember>>) -> Rescue {
         Rescue {
-            directory,
+            directory: Mutex::new(directory),
+            search,
             store,
             buyer,
             group,
@@ -160,7 +165,8 @@ impl Rescue {
         json!({
             "phase": s.phase, "log": s.log, "approval": s.approval, "group": s.group, "summary": s.summary,
             "plan": s.plan.iter().map(|p| json!({ "company": p.company, "role": p.role, "category": p.category, "pallets": p.pallets, "amountMinor": p.amount_minor, "quote": p.quote_id })).collect::<Vec<_>>(),
-            "directory": self.directory.iter().map(|c| json!({ "did": c.did, "role": c.role, "name": c.name })).collect::<Vec<_>>(),
+            "directory": self.directory.lock().unwrap().iter().map(|c| json!({ "did": c.did, "role": c.role, "name": c.name })).collect::<Vec<_>>(),
+            "discovery": if self.search.is_some() { "search agent" } else { "directory" },
         })
     }
 
@@ -177,11 +183,28 @@ impl Rescue {
     }
 
     fn name_of(&self, did: &str) -> String {
-        self.directory.iter().find(|c| c.did == did).map(|c| c.name.clone()).unwrap_or_else(|| did.to_string())
+        self.directory.lock().unwrap().iter().find(|c| c.did == did).map(|c| c.name.clone()).unwrap_or_else(|| did.to_string())
     }
 
     fn of_role(&self, role: &str) -> Vec<Company> {
-        self.directory.iter().filter(|c| c.role == role).cloned().collect()
+        self.directory.lock().unwrap().iter().filter(|c| c.role == role).cloned().collect()
+    }
+
+    /// Find the companies through the search agent, role by role, and make them the directory.
+    async fn discover(&self, search: &str) {
+        let mut found: Vec<Company> = vec![];
+        for role in anp_counterparty::ROLES {
+            match crate::discovery::find(search, role).await {
+                Ok(cs) if cs.is_empty() => self.note("discovering", &format!("the search agent knows no {role}"), None, Value::Null),
+                Ok(cs) => {
+                    let names: Vec<&str> = cs.iter().map(|c| c.name.as_str()).collect();
+                    self.note("discovering", &format!("{} {role}(s) found: {}", cs.len(), names.join(", ")), None, json!({ "dids": cs.iter().map(|c| &c.did).collect::<Vec<_>>() }));
+                    found.extend(cs);
+                }
+                Err(e) => self.note("discovering", &format!("could not search for a {role}: {e}"), None, Value::Null),
+            }
+        }
+        *self.directory.lock().unwrap() = found;
     }
 
     /// Start the rescue, unless one is running.
@@ -191,7 +214,7 @@ impl Rescue {
             if !matches!(s.phase.as_str(), "idle" | "done" | "failed" | "declined") {
                 return Err(format!("a rescue is already under way ({})", s.phase));
             }
-            *s = State { phase: "assessing".into(), log: vec![], plan: vec![], approval: None, group: None, summary: None };
+            *s = State { phase: "starting".into(), log: vec![], plan: vec![], approval: None, group: None, summary: None };
         }
         *self.decision.lock().unwrap() = None;
         let me = self.clone();
@@ -294,7 +317,13 @@ impl Rescue {
     // ── the loop ───────────────────────────────────────────────────────────────────────────────────────────
 
     async fn run(self: &Arc<Self>) -> Result<(), String> {
+        // 0. who can help: found through the search agent, when there is one
+        if let Some(s) = self.search.clone() {
+            self.phase("discovering");
+            self.discover(&s).await;
+        }
         // 1. assess
+        self.phase("assessing");
         let st = self.store.state();
         let n = needs(&st);
         let at_stake: u64 = n.frozen.iter().map(|p| p.value_minor).sum();
@@ -474,7 +503,8 @@ impl Rescue {
                 Ok(group) => {
                     self.state.lock().unwrap().group = Some(group.clone());
                     self.note("coordinating", &format!("opened an encrypted group, {group}"), None, Value::Null);
-                    let dids: Vec<String> = confirmed.iter().filter_map(|p| self.directory.iter().find(|c| c.name == p.company).map(|c| c.did.clone())).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+                    let directory = self.directory.lock().unwrap().clone();
+                    let dids: Vec<String> = confirmed.iter().filter_map(|p| directory.iter().find(|c| c.name == p.company).map(|c| c.did.clone())).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
                     for did in dids {
                         match g.add(&group, &did, None).await {
                             Ok(()) => self.note("coordinating", &format!("{} joins the group", self.name_of(&did)), None, Value::Null),

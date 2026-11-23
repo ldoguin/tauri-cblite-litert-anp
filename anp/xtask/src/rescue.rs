@@ -151,6 +151,124 @@ pub fn bring_up(work: &Path) -> Result<Night, String> {
     Ok(Night { store, others: nodes, sellers, token_issued })
 }
 
+/// The search agent's port (plain HTTP JSON-RPC at `/`).
+pub const SEARCH_PORT: u16 = 19111;
+
+/// Where a node's HTTPS front listens (its DID names `localhost:<this port>`).
+fn tls(port: u16) -> u16 {
+    port + 100
+}
+
+fn search_rpc(method: &str, params: Value) -> Value {
+    post_json(&format!("http://127.0.0.1:{SEARCH_PORT}/"), &json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params }).to_string()).1
+}
+
+/// The same night with nothing handed out in advance: every node is a `did:wba` on its own HTTPS origin (`localhost:<port>`, behind a TLS
+/// front with a CA made for the run), the companies register their signed descriptions with a search agent, and the store's agent finds
+/// them there. Every node resolves the DIDs it meets over HTTPS. The one thing every resolver is given is the test CA.
+pub fn bring_up_discovered(work: &Path) -> Result<Night, String> {
+    println!("Ten nodes and a search agent; every DID resolved over HTTPS, nothing handed out");
+    let root = root_key(work, "retailer");
+    let work = work.to_path_buf();
+    let ca = crate::tlsfront::test_ca(&work)?;
+    let ports: Vec<u16> = [HOST, STORE].into_iter().chain(SELLERS.iter().map(|s| s.2)).collect();
+    for p in &ports {
+        ca.front(tls(*p), *p)?;
+    }
+    let pem = ca.pem_file.display().to_string();
+    let mut trust = strs(&["--resolver-roots", &pem, "--resolver-allow-private"]);
+    for p in &ports {
+        trust.extend(strs(&["--trust-domain", &format!("localhost:{}", tls(*p))]));
+    }
+    // a node: its DID on its HTTPS origin; requests to it signed (ANP-02) for its plain port, where its message service is
+    let node = |port: u16| -> Vec<String> {
+        [
+            strs(&[
+                "--did-host", &format!("localhost:{}", tls(port)), "--e2ee", "--direct-messaging", "--require-auth", "--public-origin", &format!("http://127.0.0.1:{port}"),
+                "--message-endpoint", &format!("http://127.0.0.1:{port}/anp/direct"), "--group-member", &host_url(),
+            ]),
+            trust.clone(),
+        ]
+        .concat()
+    };
+
+    let store_did = did_for(&work, "store", &format!("localhost:{}", tls(STORE)), "store");
+    let store_key = std::fs::read_to_string(work.join("store").join("node.pub")).map_err(|e| e.to_string())?.trim().to_string();
+    let token = work.join("store.token");
+    let token_issued = run_tool(
+        "anp-admin",
+        &strs(&[
+            "issue", "--root", &work.join("retailer.key").display().to_string(), "--node", "store", "--key", &store_key, "--did", &store_did, "--days", "1",
+            "--spend-cap", "6000", "--currency", "EUR", "--spend-category", "transport,storage,donation,coverage,restock", "--spend-for", "store-0412",
+            "--out", &token.display().to_string(),
+        ]),
+    );
+
+    let search_url = format!("http://127.0.0.1:{SEARCH_PORT}/");
+    let mut nodes = vec![Node::start_program(
+        &work,
+        "anp-search",
+        "search",
+        &strs(&["--data", &work.join("search").display().to_string(), "--http-port", &SEARCH_PORT.to_string(), "--did-host", &format!("localhost:{SEARCH_PORT}"), "--resolver-roots", &pem, "--resolver-allow-private"]),
+    )];
+    let host_args = [strs(&["--did-host", &format!("localhost:{}", tls(HOST)), "--group-host", "--require-auth", "--public-origin", &host_url()]), trust.clone()].concat();
+    nodes.push(Node::start(&work, "groups", "groups", HOST, &host_args));
+    let mut sellers: Vec<(String, String, String, PathBuf, u16)> = vec![];
+    for (name, role, port) in SELLERS {
+        let extra = [node(port), strs(&["--counterparty", name, "--buyer-root", &root, "--agent", "echo", "--register-with", &search_url])].concat();
+        nodes.push(Node::start(&work, name, name, port, &extra));
+        sellers.push((name.to_string(), role.to_string(), String::new(), PathBuf::new(), port));
+    }
+    let store_args = [
+        node(STORE),
+        strs(&["--store-sim", "0", "--spend-token", &token.display().to_string(), "--spend-root", &root, "--budget", "6000", "--site", "store-0412", "--rescue-search", &search_url]),
+    ]
+    .concat();
+    let store = Node::start(&work, "store", "store", STORE, &store_args);
+    // the companies register themselves; the search agent verifies each description before it lists it
+    poll(120, 500, || search_rpc("list", json!({}))["result"]["total"] == 8);
+    Ok(Night { store, others: nodes, sellers, token_issued })
+}
+
+/// `cargo xtask e2e-discovery`: the night with discovery, checked.
+pub fn run_discovered() -> Result<i32, String> {
+    require_bins(&["anp-node", "anp-admin", "anp-search"])?;
+    let work = work_dir("xtask-discovery");
+    fresh_dir(&work);
+    let mut c = Checks::default();
+    let night = bring_up_discovered(&work)?;
+    c.check("the retailer's authority gives the store €6,000 per commitment, for store 0412", night.token_issued.0 == 0, &night.token_issued.1);
+    let (mut store, mut nodes, sellers) = (night.store, night.others, night.sellers);
+
+    println!("Discovery");
+    let listed = search_rpc("list", json!({}))["result"].clone();
+    c.check("the eight companies registered their signed descriptions, and the search agent verified and listed them", listed["total"] == 8, listed.to_string());
+    let entries = listed["entries"].as_array().cloned().unwrap_or_default();
+    c.check(
+        "each listing is a did:wba on its own HTTPS origin, with the company's name and what it does",
+        entries.iter().all(|e| e["did"].as_str().map_or(false, |d| d.starts_with("did:wba:localhost%3A")) && e["url"].as_str().map_or(false, |u| u.starts_with("https://localhost:"))),
+        Value::Array(entries.clone()).to_string(),
+    );
+    let found = search_rpc("search", json!({ "query": "refrigerated transport" }))["result"]["results"].clone();
+    let names: Vec<&str> = found.as_array().into_iter().flatten().filter_map(|r| r["name"].as_str()).collect();
+    c.check("a search for refrigerated transport finds the three carriers first", names.len() >= 3 && names[..3].iter().all(|n| ["FrostLine Logistics", "Polar Express", "ColdChain Rungis"].contains(n)), format!("{names:?}"));
+    let r = rescue();
+    c.check("the store's agent starts with no directory: it will search", r["phase"] == "idle" && r["discovery"] == "search agent" && r["directory"].as_array().map_or(true, |d| d.is_empty()), r.to_string());
+
+    play(&mut c, &sellers);
+    let r = rescue();
+    for (role, n) in [("carrier", 3), ("warehouse", 2), ("foodbank", 1), ("insurer", 1), ("supplier", 1)] {
+        c.check(&format!("the agent found {n} {role}(s) through the search agent"), logged(&r, &format!("{n} {role}(s) found"), None), "");
+    }
+    c.check("and talked to all eight without having been given any DID document (resolved over HTTPS)", r["directory"].as_array().map_or(0, |d| d.len()) == 8, r["directory"].to_string());
+
+    store.kill();
+    for n in &mut nodes {
+        n.kill();
+    }
+    Ok(c.finish())
+}
+
 /// The night, checked step by step.
 fn play(c: &mut Checks, sellers: &[(String, String, String, PathBuf, u16)]) {
     println!("The night: freezer 1 and the dairy chiller fail at 01:50, freezer 2 at 02:40");
@@ -192,7 +310,8 @@ fn play(c: &mut Checks, sellers: &[(String, String, String, PathBuf, u16)]) {
     c.check("six deals confirmed by their companies, €10,500 spent", r["summary"]["confirmed"] == 6 && r["summary"]["spentMinor"] == 1_050_000, r["summary"].to_string());
     c.check("every one audits, as the insurer will check it", r["summary"]["audited"] == 6, r["summary"].to_string());
     let group = r["group"].as_str().unwrap_or_default().to_string();
-    c.check("the agent opened an encrypted group for the rescue", group.starts_with("did:wba:groups.test"), group.clone());
+    // the group DID is on the group host's domain (groups.test, or its HTTPS origin when every DID is resolved over HTTPS)
+    c.check("the agent opened an encrypted group for the rescue", group.starts_with("did:wba:") && group.contains(":groups:rescue-"), group.clone());
     let joined: Vec<&str> = ["coldchain", "rungis-cold", "orly-freeze", "foodbank", "insurer", "supplier"].into_iter().filter(|n| logged(&r, &format!("{} joins the group", anp_name(n)), None)).collect();
     c.check("the six companies that confirmed joined it (not FrostLine, not Polar)", joined.len() == 6 && !logged(&r, "FrostLine Logistics joins", None), format!("{joined:?}"));
     for (name, _, _, _, port) in sellers.iter().filter(|s| ["coldchain", "rungis-cold", "foodbank"].contains(&s.0.as_str())) {

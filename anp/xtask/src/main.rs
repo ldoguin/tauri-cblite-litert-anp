@@ -18,6 +18,7 @@ mod harness;
 mod mesh;
 mod quotes;
 mod rescue;
+mod tlsfront;
 mod grouphost;
 mod remote;
 mod secondhost;
@@ -38,6 +39,7 @@ const TASKS: &[(&str, &str)] = &[
     ("e2e-coldstore", "the simulated store: its signed temperature log replicated to a head office, a freezer fault flagged by the rules, a cut link"),
     ("e2e-quotes", "the store buys from eight counterparty nodes with signed quotes: carriers, warehouses, a food bank, an insurer, a supplier; limits, approval, a new token, an audit"),
     ("e2e-rescue", "the whole rescue run by the store's agent on ten nodes: assess, ask, choose by rules, re-plan, ask the duty manager, commit, coordinate in a group, audit"),
+    ("e2e-discovery", "the same night with nothing handed out: the companies register with a search agent, the store finds them there, every DID resolved over HTTPS"),
     ("group-host", "the group host for end-to-end encrypted groups (ANP P6) over signed HTTP: the node_live tests against a node started here (the host part of scripts/e2e-group-host.ps1; also runs as p6-host)"),
 ];
 
@@ -61,6 +63,7 @@ fn main() {
         "e2e-coldstore" => coldstore::run(),
         "e2e-quotes" => quotes::run(),
         "e2e-rescue" => rescue::run(),
+        "e2e-discovery" => rescue::run_discovered(),
         "cold-rescue" => coldrescue::run(&args),
         "group-host" | "p6-host" => grouphost::run(),
         "all" => {
@@ -85,6 +88,7 @@ fn main() {
                     "e2e-coldstore" => coldstore::run(),
                     "e2e-quotes" => quotes::run(),
                     "e2e-rescue" => rescue::run(),
+                    "e2e-discovery" => rescue::run_discovered(),
                     _ => grouphost::run(),
                 };
                 match r {

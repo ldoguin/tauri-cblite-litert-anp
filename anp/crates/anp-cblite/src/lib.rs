@@ -25,6 +25,7 @@ pub mod group_member;
 pub mod coldstore;
 pub mod quotes;
 pub mod rescue;
+pub mod discovery;
 #[cfg(feature = "enterprise")]
 pub mod p2p;
 pub mod direct_messaging;

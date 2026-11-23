@@ -1,5 +1,6 @@
 //! `cargo xtask cold-rescue [--record OUT.mp4 | --hold SECONDS]`: the cold-stock rescue demo. Brings up the night's ten nodes (the store with its cold room,
-//! buying desk and agent; eight companies on their own domains; a group host) and opens nothing: it prints the control room's address.
+//! buying desk and agent; eight companies on their own HTTPS origins; a group host) and a search agent the companies register with, and opens
+//! nothing: it prints the control room's address. The store's agent finds the companies through the search agent (see `e2e-discovery`).
 //!
 //! * Without `--record` it waits: open `http://127.0.0.1:19102/demo/rescue` and drive the night with the page's buttons, or add
 //!   `?autoplay=1` to watch it play with captions. Press Enter to stop every node.
@@ -7,13 +8,14 @@
 //!   cards (`scripts/video/record.mjs`; needs Node 22+, Chrome or Edge, and ffmpeg), then stops.
 
 use crate::harness::*;
-use crate::rescue::{bring_up, STORE_PORT};
+use crate::rescue::{bring_up_discovered, STORE_PORT};
 
 pub fn run(args: &[String]) -> Result<i32, String> {
-    require_bins(&["anp-node", "anp-admin"])?;
+    require_bins(&["anp-node", "anp-admin", "anp-search"])?;
     let work = work_dir("cold-rescue");
     fresh_dir(&work);
-    let mut night = bring_up(&work)?;
+    // the realistic night: the companies register with a search agent and the store finds them there, every DID over HTTPS
+    let mut night = bring_up_discovered(&work)?;
     if night.token_issued.0 != 0 {
         return Err(format!("the store's spending token was not issued: {}", night.token_issued.1));
     }

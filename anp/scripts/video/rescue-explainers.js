@@ -7,7 +7,7 @@
     ["A controller fault", "The fault is in the cold room, not the network: what follows works the same with the store's internet link down, and catches up when it returns."],
     ["Fifty minutes later", "Food-safety rules, not the model, decide what is lost: a limit with an allowance in minutes, and a hard limit. What is past it is never moved or given away."],
     ["Then freezer 2", "The assessment runs the cooling model forward: how many minutes each product has left, ranked by urgency and value."],
-    ["The store's agent takes over", "Eight companies, each its own node on its own domain (did:wba). Requests go out in end-to-end encrypted direct conversations, signed with HTTP Message Signatures."],
+    ["The store's agent takes over", "Each company registered its signed agent description with a search agent, which verified it against the company's DID over HTTPS. The store searches by what it needs, resolves each DID itself, then writes in end-to-end encrypted conversations."],
     ["Quotes come back", "Every quote is a signed message naming the request it answers by digest. Rules: arrive before the first loss, cheapest wins, re-plan when a warehouse has too little room, move only what is worth it."],
     ["The plan costs", "The store's authority to spend is a Biscuit token bound to its DID: €6,000 per commitment. Its budget caps the total. Past either, the agent cannot sign: a person decides."],
     ["The duty manager approves", "Raising the budget is a person's decision. A higher cap would need a new token from the retailer's authority: a holder can narrow a token, never widen it."],

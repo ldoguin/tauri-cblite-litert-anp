@@ -75,6 +75,38 @@ impl Profile {
 
     pub const BUILTIN: [&'static str; 8] = ["frostline", "polar", "coldchain", "rungis-cold", "orly-freeze", "foodbank", "insurer", "supplier"];
 
+    /// What the company says it does, in the words a buyer would search for: it goes into the agent's signed description, which a
+    /// search agent indexes. It always contains its role's [`role_phrase`].
+    pub fn description(&self) -> String {
+        let what = match self.role.as_str() {
+            "carrier" => "refrigerated transport, reefer trucks for frozen and chilled goods, at night too",
+            "warehouse" => "cold storage, frozen warehouse space by the pallet",
+            "foodbank" => "food bank, takes donations of food before it is lost",
+            "insurer" => "stock insurance, cover for spoiled stock and the evidence a claim needs",
+            "supplier" => "wholesale restock, fresh and frozen food delivered for the morning",
+            _ => "",
+        };
+        format!("{}: {what}", self.name)
+    }
+}
+
+/// The phrase every company of a role puts in its description, and that a buyer searches for.
+pub fn role_phrase(role: &str) -> Option<&'static str> {
+    Some(match role {
+        "carrier" => "refrigerated transport",
+        "warehouse" => "cold storage",
+        "foodbank" => "food bank",
+        "insurer" => "stock insurance",
+        "supplier" => "wholesale restock",
+        _ => return None,
+    })
+}
+
+/// The roles a rescue needs.
+pub const ROLES: [&str; 5] = ["carrier", "warehouse", "foodbank", "insurer", "supplier"];
+
+impl Profile {
+
     pub fn to_json(&self) -> Value {
         json!({ "id": self.id, "name": self.name, "role": self.role, "categories": self.categories, "currency": self.currency,
                 "baseMinor": self.base_minor, "perPalletMinor": self.per_pallet_minor, "capacityPallets": self.capacity_pallets,
@@ -205,5 +237,13 @@ mod tests {
         assert!(matches!(Desk::new(Profile::builtin("coldchain").unwrap()).decide(&usd), Decision::Refuse(_)));
         assert!(Profile::BUILTIN.iter().all(|id| Profile::builtin(id).is_some()));
         assert!(Profile::builtin("acme").is_none());
+        // every description carries its role's phrase, and no other role's: what a search must tell apart
+        for id in Profile::BUILTIN {
+            let p = Profile::builtin(id).unwrap();
+            let d = p.description().to_lowercase();
+            for role in ROLES {
+                assert_eq!(d.contains(role_phrase(role).unwrap()), role == p.role, "{id} / {role}: {d}");
+            }
+        }
     }
 }

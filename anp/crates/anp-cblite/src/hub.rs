@@ -348,10 +348,10 @@ impl Hub {
     }
 
     /// The store's agent: needs the store simulation and the buying desk (set first); uses group membership if there is one.
-    pub fn set_rescue(&self, directory: Vec<crate::rescue::Company>) -> Result<(), String> {
+    pub fn set_rescue(&self, directory: Vec<crate::rescue::Company>, search: Option<String>) -> Result<(), String> {
         let store = self.store_sim().ok_or("the rescue agent needs the store's cold room (--store-sim)")?;
         let buyer = self.quote_buyer().ok_or("the rescue agent needs a buying desk (--spend-token)")?;
-        *self.rescue.lock().unwrap() = Some(Arc::new(crate::rescue::Rescue::new(directory, store, buyer, self.group_member())));
+        *self.rescue.lock().unwrap() = Some(Arc::new(crate::rescue::Rescue::new(directory, search, store, buyer, self.group_member())));
         Ok(())
     }
 
