@@ -273,6 +273,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "anp-quote"
+version = "0.1.0"
+dependencies = [
+ "anp-authz",
+ "anp-did",
+ "base64 0.22.1",
+ "chrono",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "anp-resolve"
 version = "0.1.0"
 dependencies = [

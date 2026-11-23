@@ -364,6 +364,12 @@ pub struct Commitment<'a> {
 /// This is what a counterparty runs before it accepts an order: the holder cannot talk it past the limit.
 /// Revocation is the caller's deny-list, as for documents ([`Authorized::revocation_ids`]).
 pub fn authorize_commitment(token_b64: &str, root: &PublicKey, c: &Commitment, did: Option<&str>) -> Result<Authorized, String> {
+    authorize_commitment_at(token_b64, root, c, did, SystemTime::now())
+}
+
+/// [`authorize_commitment`] as of time `at` instead of now: was the commitment within the holder's authority when it
+/// was made? This is how a record is audited later, after the token has expired.
+pub fn authorize_commitment_at(token_b64: &str, root: &PublicKey, c: &Commitment, did: Option<&str>, at: SystemTime) -> Result<Authorized, String> {
     if did.map_or(false, |d| !did_ok(d)) {
         return Err("malformed DID".into());
     }
@@ -375,8 +381,8 @@ pub fn authorize_commitment(token_b64: &str, root: &PublicKey, c: &Commitment, d
     }
     let token = Biscuit::from_base64(token_b64, *root).map_err(|e| format!("invalid token: {e}"))?;
     let mut src = format!(
-        "claimed_node(\"{}\");\nclaimed_key(\"{}\");\ncollection(\"commit\");\ncommit_amount({});\ncommit_currency(\"{}\");\ncommit_category(\"{}\");\ncommit_for(\"{}\");\n",
-        c.node, c.key_b64, c.amount_minor, c.currency, c.category, c.on_behalf_of
+        "time({});\nclaimed_node(\"{}\");\nclaimed_key(\"{}\");\ncollection(\"commit\");\ncommit_amount({});\ncommit_currency(\"{}\");\ncommit_category(\"{}\");\ncommit_for(\"{}\");\n",
+        rfc3339(at), c.node, c.key_b64, c.amount_minor, c.currency, c.category, c.on_behalf_of
     );
     if let Some(d) = did {
         src.push_str(&format!("claimed_did(\"{d}\");\ncheck if did($d), claimed_did($d);\n"));
@@ -397,7 +403,6 @@ pub fn authorize_commitment(token_b64: &str, root: &PublicKey, c: &Commitment, d
     let limits = AuthorizerLimits { max_time: Duration::from_millis(100), ..Default::default() };
     let mut authorizer = AuthorizerBuilder::new()
         .set_limits(limits)
-        .time()
         .code(&src)
         .map_err(|e| format!("authorizer: {e}"))?
         .build(&token)
@@ -867,6 +872,9 @@ mod tests {
         g.expires = Some(SystemTime::now() - Duration::from_secs(60));
         let t = auth.issue(&g).unwrap();
         assert!(authorize_commitment(&t, &auth.public_key(), &order(1, "transport", "s"), None).is_err());
+        // but it was valid when the commitment was made: an audit after the fact still passes
+        let then = SystemTime::now() - Duration::from_secs(3600);
+        authorize_commitment_at(&t, &auth.public_key(), &order(1, "transport", "s"), None, then).unwrap();
     }
 
     #[test]
