@@ -79,13 +79,41 @@ pub fn run() -> Result<i32, String> {
     let work = work_dir("xtask-rescue");
     fresh_dir(&work);
     let mut c = Checks::default();
+    let night = bring_up(&work)?;
+    c.check("the retailer's authority gives the store €6,000 per commitment, for store 0412", night.token_issued.0 == 0, &night.token_issued.1);
+    let (mut store, mut nodes, sellers) = (night.store, night.others, night.sellers);
+    c.check("the store's agent is idle, with eight companies in its directory", rescue()["phase"] == "idle" && rescue()["directory"].as_array().map_or(0, |d| d.len()) == 8, rescue().to_string());
+    play(&mut c, &sellers);
+    store.kill();
+    for n in &mut nodes {
+        n.kill();
+    }
+    Ok(c.finish())
+}
 
+/// The ten nodes of the night, running.
+pub struct Night {
+    pub store: Node,
+    pub others: Vec<Node>,
+    /// `(profile, role, did, document file, port)` of each company.
+    pub sellers: Vec<(String, String, String, PathBuf, u16)>,
+    /// What `anp-admin issue` answered for the store's spending token.
+    pub token_issued: (i32, String),
+}
+
+/// The store's port (its control room is `http://127.0.0.1:<STORE>/demo/rescue`).
+pub const STORE_PORT: u16 = STORE;
+
+/// Bring up the night's ten nodes: the retailer's authority and the store's spending token (€6,000 per commitment), eight companies on
+/// their own domains, a group host, and the store with its cold room (clock stopped), buying desk and agent.
+pub fn bring_up(work: &Path) -> Result<Night, String> {
     println!("Ten nodes: the store, eight companies, a group host");
-    let root = root_key(&work, "retailer");
+    let root = root_key(work, "retailer");
+    let work = work.to_path_buf();
     let (store_did, store_doc) = document(&work, "store", STORE)?;
     let store_key = std::fs::read_to_string(work.join("store").join("node.pub")).map_err(|e| e.to_string())?.trim().to_string();
     let token = work.join("store.token");
-    let (code, out) = run_tool(
+    let token_issued = run_tool(
         "anp-admin",
         &strs(&[
             "issue", "--root", &work.join("retailer.key").display().to_string(), "--node", "store", "--key", &store_key, "--did", &store_did, "--days", "1",
@@ -93,7 +121,6 @@ pub fn run() -> Result<i32, String> {
             "--out", &token.display().to_string(),
         ]),
     );
-    c.check("the retailer's authority gives the store €6,000 per commitment, for store 0412", code == 0, out);
     let mut sellers: Vec<(String, String, String, PathBuf, u16)> = vec![];
     for (name, role, port) in SELLERS {
         let (did, doc) = document(&work, name, port)?;
@@ -120,9 +147,12 @@ pub fn run() -> Result<i32, String> {
     for (_, _, did, doc, port) in &sellers {
         store_args.extend(peer(doc, did, *port));
     }
-    let mut store = Node::start(&work, "store", "store", STORE, &store_args);
-    c.check("the store's agent is idle, with eight companies in its directory", rescue()["phase"] == "idle" && rescue()["directory"].as_array().map_or(0, |d| d.len()) == 8, rescue().to_string());
+    let store = Node::start(&work, "store", "store", STORE, &store_args);
+    Ok(Night { store, others: nodes, sellers, token_issued })
+}
 
+/// The night, checked step by step.
+fn play(c: &mut Checks, sellers: &[(String, String, String, PathBuf, u16)]) {
     println!("The night: freezer 1 and the dairy chiller fail at 01:50, freezer 2 at 02:40");
     act("/store/sim/fault", json!({ "unit": "frz-1", "fault": "defrost-stuck" }));
     act("/store/sim/fault", json!({ "unit": "chl-1", "fault": "compressor-off" }));
@@ -177,12 +207,6 @@ pub fn run() -> Result<i32, String> {
     c.check("the ledger: €10,500 committed of €11,000", ledger["committedMinor"] == 1_050_000 && ledger["remainingMinor"] == 50_000, ledger.to_string());
     let (code, _) = act("/rescue/approve", json!({}));
     c.check("nothing is waiting for approval any more", code == 400, code.to_string());
-
-    store.kill();
-    for n in &mut nodes {
-        n.kill();
-    }
-    Ok(c.finish())
 }
 
 /// The company names the profiles carry (as the agent's log uses them).

@@ -462,6 +462,25 @@ anp-node --name alice --data ./alice --did-host alice.example.com --root-key <RO
 * The `e1` profile only; `k1_` and legacy path DIDs without a fingerprint are rejected.
 * Checked against the written spec **and** against the official SDKs (Python, Rust and Go at 1.0.7, TypeScript at 0.9.5): see Interoperability above for what was run and what was not (one machine, one running node at a time, no Dart or Java).
 
+## The cold-stock rescue demo
+
+A store's freezers fail overnight and its own agent saves what it can with eight companies it has never worked with (see the plan,
+milestones 1 to 7 in "Where it stands"). One command brings up the night's ten nodes and its control room:
+
+```text
+cargo build -p anp-node -p anp-authz
+cargo xtask cold-rescue                       # then open http://127.0.0.1:19102/demo/rescue; Enter stops the ten nodes
+                                              # http://127.0.0.1:19102/demo/rescue?autoplay=1 plays the night with captions
+cargo xtask cold-rescue --record night.mp4    # films the autoplay with explainers and intro/outro cards (Node 22+, Chrome or Edge, ffmpeg)
+cargo xtask e2e-rescue                        # the same night, checked: 30 checks
+```
+
+The control room shows the store's cold room and its signed temperature log, the stock under its food-safety rules, the agent's log with
+the rule behind each decision, the duty manager's decision card, every company's quote and confirmation with the ledger, and the encrypted
+group. Its buttons drive the night by hand. The recording tools (`scripts/video/record.mjs`) take `--intro`, `--outro` and `--explainers`;
+the rescue uses `rescue-intro.html`, `rescue-outro.html` and `rescue-explainers.js`. Like the rest of the project, the store and the companies
+are fictional and the agent plans by rules; the protocol, signatures and encryption are real.
+
 ## Build and test
 
 Names: the flags `--direct-messaging`, `--direct-peer`, `--group-host`, `--group-open-mailboxes`, the paths `/anp/direct` and `/anp/groups`, and the
@@ -478,6 +497,7 @@ cargo xtask e2e-group                                                      # thr
 cargo xtask e2e-coldstore                                                  # the simulated store, its signed temperature log at a head office, a cut link: 27 checks
 cargo xtask e2e-quotes                                                     # the store buys from eight counterparty nodes with signed quotes, limits and an approval: 35 checks
 cargo xtask e2e-rescue                                                     # the store's agent runs the whole rescue on ten nodes, the duty manager approves: 30 checks
+cargo xtask cold-rescue [--record OUT.mp4]                                 # the demo: the ten nodes and the control room (see "The cold-stock rescue demo")
 cargo xtask e2e-did                                                        # DID mode, descriptions, discovery, attackers: 33 checks
 cargo xtask e2e-did-biscuit                                                # DID + Biscuit: scoping, stolen tokens, revocation: 20 checks
 cargo xtask e2e | e2e-secure | e2e-biscuit                                 # two nodes: routing, streaming, cancel, outsiders, scoped tokens, revocation: 22 / 37 / 52 checks

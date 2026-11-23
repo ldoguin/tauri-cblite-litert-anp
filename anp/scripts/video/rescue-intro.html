@@ -1,0 +1,26 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>rescue-intro</title><style>
+  :root { --bg:#0f0e0d; --fg:#f5f4f2; --mut:#a8a29e; --red:#ea2328; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; width:1920px; height:1080px; background:var(--bg); color:var(--fg); font:28px/1.45 "Segoe UI", system-ui, sans-serif; overflow:hidden; }
+  body { display:flex; flex-direction:column; justify-content:center; padding:0 150px; }
+  .tag { color:var(--red); font-weight:700; letter-spacing:.14em; text-transform:uppercase; font-size:24px; margin-bottom:18px; }
+  h1 { font-size:76px; line-height:1.1; margin:0 0 28px; font-weight:700; }
+  p.lead { font-size:34px; color:var(--mut); margin:0 0 46px; max-width:1550px; }
+  ul { margin:0; padding:0; list-style:none; display:grid; gap:20px; max-width:1560px; }
+  li { padding-left:44px; position:relative; }
+  li::before { content:""; position:absolute; left:0; top:.55em; width:16px; height:16px; border-radius:50%; background:var(--red); }
+  li b { color:#fff; }
+  .foot { position:absolute; left:150px; right:150px; bottom:56px; color:var(--mut); font-size:22px; }
+  code { font-family:Consolas, monospace; background:#1a1816; padding:2px 8px; border-radius:6px; }
+</style></head><body>
+<div class="tag">Agent Network Protocol on Couchbase Lite</div>
+<h1>Cold-stock rescue: agents across companies</h1>
+<p class="lead">In October 2026, attackers put hundreds of supermarkets' refrigeration controllers into defrost overnight. This is the night after: a store's own agent saves what it can, with companies it has never worked with.</p>
+<ul>
+  <li><b>Ten nodes, ten identities.</b> The store, three carriers, two warehouses, a food bank, an insurer, a supplier and a group host, each a <code>did:wba</code> on its own domain.</li>
+  <li><b>Limited, delegated authority.</b> The store may commit up to €6,000 per order. Every company checks that itself.</li>
+  <li><b>Private and provable.</b> End-to-end encrypted conversations and groups; every quote, acceptance and confirmation is signed.</li>
+  <li><b>A person above the limit.</b> Over its budget, the agent can only ask.</li>
+</ul>
+<div class="foot">A simulation: the store, the companies and their prices are fictional, and the agent plans by rules. The protocol, the signatures and the encryption are the real thing.</div>
+</body></html>

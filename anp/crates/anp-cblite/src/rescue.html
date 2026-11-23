@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cold-stock rescue</title>
+<style>
+  :root {
+    --bg: #0f0e0d; --panel: #1a1816; --panel2: #221f1c; --line: #34302b; --fg: #f5f4f2; --mut: #a8a29e; --dim: #77716b;
+    --red: #ea2328; --amber: #f5a524; --green: #3fb950; --blue: #58a6ff; --ice: #9fd8ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 "Segoe UI", system-ui, sans-serif; }
+  body { height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  header { display: flex; align-items: center; gap: 18px; padding: 14px 22px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 22px; margin: 0; font-weight: 650; }
+  header .tag { color: var(--red); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; font-size: 12px; }
+  .clock { font: 600 26px/1 Consolas, monospace; color: var(--ice); margin-left: auto; }
+  .pill { padding: 4px 12px; border-radius: 999px; background: var(--panel2); border: 1px solid var(--line); font-size: 13px; color: var(--mut); }
+  .pill.live { color: var(--fg); border-color: var(--amber); }
+  .pill.wait { color: #000; background: var(--amber); border-color: var(--amber); }
+  .pill.done { color: #000; background: var(--green); border-color: var(--green); }
+  main { flex: 1; display: grid; grid-template-columns: 1.05fr 1.25fr 1fr; gap: 14px; padding: 14px 22px; min-height: 0; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .scroll { overflow: auto; min-height: 0; flex: 1; }
+  section + section { margin-top: 14px; }
+  .col { display: flex; flex-direction: column; min-height: 0; }
+  h2 { font-size: 12px; margin: 0 0 10px; color: var(--mut); text-transform: uppercase; letter-spacing: .1em; font-weight: 650; }
+  .units { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .unit { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+  .unit .name { font-size: 12px; color: var(--mut); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .unit .t { font: 600 28px/1.2 Consolas, monospace; }
+  .unit.bad { border-color: var(--red); }
+  .unit.bad .t { color: var(--red); }
+  .unit .fault { font-size: 11px; color: var(--red); text-transform: uppercase; letter-spacing: .06em; min-height: 15px; }
+  .unit svg { width: 100%; height: 34px; display: block; margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  td, th { padding: 5px 6px; border-bottom: 1px solid var(--line); text-align: left; }
+  th { color: var(--dim); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .st { font-size: 12px; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
+  .st.safe { color: var(--green); border: 1px solid #2a5e33; }
+  .st.risk { color: #000; background: var(--amber); }
+  .st.lost { color: #fff; background: var(--red); }
+  .st.moved { color: #000; background: var(--ice); }
+  .money { display: flex; gap: 18px; margin-top: 10px; font-size: 13px; color: var(--mut); }
+  .money b { color: var(--fg); font-size: 16px; }
+  #log { overflow: auto; flex: 1; display: flex; flex-direction: column; gap: 6px; }
+  .ev { display: grid; grid-template-columns: 92px 1fr; gap: 8px; padding: 6px 8px; border-radius: 6px; background: var(--panel2); animation: in .35s ease; }
+  .ev .step { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .05em; padding-top: 2px; }
+  .ev .rule { display: inline-block; margin-top: 3px; font-size: 11px; color: var(--blue); border: 1px solid #234a73; border-radius: 4px; padding: 0 6px; }
+  .ev.done { outline: 1px solid var(--green); }
+  @keyframes in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  #approval { display: none; border: 2px solid var(--amber); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; background: #2a2114; }
+  #approval .q { font-size: 17px; font-weight: 650; margin-bottom: 6px; }
+  #approval ul { margin: 6px 0 8px 18px; padding: 0; color: var(--mut); font-size: 13px; }
+  #approval .opts { display: flex; gap: 14px; font-size: 13px; }
+  .deal { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 7px 8px; border-bottom: 1px solid var(--line); }
+  .deal .who { font-weight: 600; }
+  .deal .role { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .05em; }
+  .deal .what { font-size: 12px; color: var(--mut); grid-column: 1 / -1; }
+  .deal .state { font-size: 12px; text-align: right; white-space: nowrap; }
+  .confirmed { color: var(--green); } .refused, .declined { color: var(--red); } .offered { color: var(--ice); } .pending, .asked { color: var(--amber); } .notchosen { color: var(--dim); }
+  .bar { height: 10px; background: var(--panel2); border-radius: 6px; overflow: hidden; margin: 6px 0 4px; }
+  .bar > div { height: 100%; background: var(--green); width: 0; transition: width .5s; }
+  #group .msg { background: var(--panel2); border-radius: 6px; padding: 8px 10px; font-size: 13px; margin-top: 6px; }
+  #group .who { color: var(--dim); font-size: 11px; }
+  .lock { color: var(--green); font-size: 12px; }
+  #deals { overflow: auto; }
+  .empty { color: var(--dim); font-size: 13px; }
+  footer { flex: none; }
+  #caption { margin: 0; padding: 16px 40px; background: rgba(15,14,13,.97); border-top: 3px solid var(--red); font-size: 24px; text-align: center; min-height: 68px; }
+  #controls { display: flex; gap: 8px; padding: 8px 22px; background: var(--panel); border-top: 1px solid var(--line); flex-wrap: wrap; }
+  button { background: var(--panel2); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+  button:hover { border-color: var(--mut); }
+  button.go { border-color: var(--amber); }
+  body.autoplay #controls { display: none; }
+  @media (max-width: 1100px) { body { height: auto; overflow: auto; } main { grid-template-columns: 1fr; } .units { grid-template-columns: 1fr 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <div><div class="tag">Agent Network Protocol on Couchbase Lite</div><h1>Cold-stock rescue · store 0412</h1></div>
+  <span id="phase" class="pill">idle</span>
+  <div class="clock" id="clock">--:--</div>
+</header>
+<main>
+  <div class="col">
+    <section><h2>Cold room · signed temperature log</h2><div class="units" id="units"></div></section>
+    <section style="flex:1"><h2>Stock · food-safety rules</h2>
+      <div class="scroll"><table><thead><tr><th>Product</th><th>Unit</th><th class="num">Pallets</th><th class="num">Value</th><th>Status</th></tr></thead><tbody id="stock"></tbody></table></div>
+      <div class="money"><span>Sellable <b id="sellable">-</b></span><span>Lost <b id="lost">-</b></span></div>
+    </section>
+  </div>
+  <div class="col">
+    <section style="flex:1"><h2>The store's agent · every decision and the rule behind it</h2>
+      <div id="approval"></div>
+      <div id="log"><div class="empty">Waiting. The agent acts when the store's stock is at risk.</div></div>
+    </section>
+  </div>
+  <div class="col">
+    <section style="flex:1.4"><h2>Companies · signed quotes, acceptances, confirmations</h2><div id="deals" class="scroll"></div>
+      <div style="margin-top:10px;font-size:13px;color:var(--mut)">Committed <b id="committed" style="color:var(--fg)">€0</b> of a <b id="budget" style="color:var(--fg)">€0</b> budget</div>
+      <div class="bar"><div id="spent"></div></div>
+    </section>
+    <section style="flex:1"><h2>Encrypted group <span class="lock" id="grouplock"></span></h2><div id="group" class="scroll"><div class="empty">Opened once deals are confirmed.</div></div></section>
+  </div>
+</main>
+<footer>
+  <p id="caption"></p>
+  <div id="controls">
+    <button onclick="act('/store/sim/fault',{unit:'frz-1',fault:'defrost-stuck'}).then(()=>act('/store/sim/fault',{unit:'chl-1',fault:'compressor-off'}))">Freezer 1 + dairy fail</button>
+    <button onclick="act('/store/sim/advance',{minutes:10})">+10 min</button>
+    <button onclick="act('/store/sim/advance',{minutes:50})">+50 min</button>
+    <button onclick="act('/store/sim/fault',{unit:'frz-2',fault:'defrost-stuck'}).then(()=>act('/store/sim/advance',{minutes:1}))">Freezer 2 fails</button>
+    <button class="go" onclick="act('/rescue/start',{})">Start the agent</button>
+    <button class="go" onclick="act('/rescue/approve',{budget:'11000'})">Approve (€11,000 budget)</button>
+    <button onclick="act('/rescue/decline',{})">Decline</button>
+  </div>
+</footer>
+<script>
+const $ = (id) => document.getElementById(id);
+const euros = (m) => m == null ? "-" : "€" + Math.round(m / 100).toLocaleString("en-GB");
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const get = (p) => fetch(p).then((r) => r.ok ? r.json() : null).catch(() => null);
+function act(p, body) { return fetch(p, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((r) => r.json().catch(() => ({}))); }
+const history = {};
+let lastMinute = -1, logCount = 0, state = { sim: null, rescue: null, quotes: null, group: null };
+
+function spark(points, kind) {
+  if (points.length < 2) return "";
+  const lo = Math.min(-22, ...points), hi = Math.max(kind === "freezer" ? 5 : 12, ...points);
+  const xs = points.map((t, i) => [i / (points.length - 1) * 100, 30 - (t - lo) / (hi - lo) * 28]);
+  const zero = 30 - (0 - lo) / (hi - lo) * 28;
+  return `<svg viewBox="0 0 100 32" preserveAspectRatio="none"><line x1="0" x2="100" y1="${zero}" y2="${zero}" stroke="#34302b" stroke-dasharray="2 2"/><polyline fill="none" stroke="currentColor" stroke-width="1.6" vector-effect="non-scaling-stroke" points="${xs.map((p) => p.join(",")).join(" ")}"/></svg>`;
+}
+
+function renderSim(s, r) {
+  if (!s) return;
+  // once the rescue is done, what it took away: the simulation keeps the stock where it was, the page says where it went
+  const done = r && r.phase === "done" ? r.plan || [] : [];
+  const moving = done.some((p) => p.category === "transport");
+  let donated = done.filter((p) => p.category === "donation").reduce((n, p) => n + p.pallets, 0);
+  const kind = Object.fromEntries(s.units.map((u) => [u.id, u.kind]));
+  const fate = {};
+  for (const a of s.assessment.filter((a) => a.status === "at-risk")) {
+    if (kind[a.unit] === "freezer" && moving) fate[a.sku] = "moved to cold storage";
+    else if (kind[a.unit] === "chiller" && donated >= a.pallets) { fate[a.sku] = "to the food bank"; donated -= a.pallets; }
+  }
+  $("clock").textContent = s.clock;
+  if (s.minute !== lastMinute) { s.units.forEach((u) => (history[u.id] = history[u.id] || []).push(u.tempC)); lastMinute = s.minute; }
+  $("units").innerHTML = s.units.map((u) => {
+    const bad = u.tempC > u.setpointC + 3;
+    return `<div class="unit ${bad ? "bad" : ""}"><div class="name">${esc(u.name)}</div><div class="t">${u.tempC.toFixed(1)} °C</div><div class="fault">${u.fault ? esc(u.fault.replace("-", " ")) : ""}</div><div style="color:${bad ? "var(--red)" : "var(--ice)"}">${spark(history[u.id].slice(-120), u.kind)}</div></div>`;
+  }).join("");
+  $("stock").innerHTML = s.assessment.map((a) => {
+    const st = fate[a.sku] ? `<span class="st moved">${fate[a.sku]}</span>` : a.status === "safe" ? `<span class="st safe">safe</span>` : a.status === "at-risk" ? `<span class="st risk">at risk · ${a.minutesLeft} min</span>` : `<span class="st lost" title="${esc(a.reason)}">lost</span>`;
+    return `<tr><td>${esc(a.name)}</td><td>${esc(a.unit)}</td><td class="num">${a.pallets}</td><td class="num">${euros(a.valueMinor)}</td><td>${st}</td></tr>`;
+  }).join("");
+  $("sellable").textContent = euros(s.valueMinor.sellable);
+  $("lost").textContent = euros(s.valueMinor.lost);
+}
+
+function renderRescue(r) {
+  if (!r) return;
+  const p = $("phase");
+  p.textContent = r.phase.replace("-", " ");
+  p.className = "pill " + (r.phase === "awaiting-approval" ? "wait" : r.phase === "done" ? "done" : r.phase === "idle" ? "" : "live");
+  // only the new lines are added (and animated); a new rescue starts the log again
+  if (r.log.length < logCount) logCount = 0;
+  if (r.log.length > logCount) {
+    if (logCount === 0) $("log").innerHTML = "";
+    $("log").insertAdjacentHTML("beforeend", r.log.slice(logCount).map((e) => `<div class="ev ${e.step === "done" ? "done" : ""}"><div class="step">${esc(e.clock)} ${esc(e.step)}</div><div>${esc(e.text)}${e.rule ? `<br><span class="rule">rule: ${esc(e.rule)}</span>` : ""}</div></div>`).join(""));
+    $("log").scrollTop = $("log").scrollHeight;
+    logCount = r.log.length;
+  }
+  const a = r.approval;
+  const box = $("approval");
+  if (a && r.phase === "awaiting-approval") {
+    box.style.display = "block";
+    box.innerHTML = `<div class="q">To the duty manager: ${esc(a.question)}</div><ul>${a.plan.map((l) => `<li>${esc(l)}</li>`).join("")}</ul><div class="opts"><span>Approve: saves <b>${euros(a.savesMinor)}</b></span><span>Decline: loses <b>${euros(a.lossIfNothingMinor)}</b></span></div>`;
+  } else box.style.display = "none";
+}
+
+function renderDeals(r, q) {
+  if (!r || !q || !q.buyer) return;
+  const b = q.buyer;
+  const reqs = Object.entries(b.requests || {}), quotes = Object.values(b.quotes || {}), accs = Object.values(b.acceptances || {}), refusals = b.refusals || [];
+  const chosen = new Set((r.plan || []).map((p) => p.company));
+  const rows = r.directory.map((c) => {
+    const mine = reqs.filter(([, x]) => x.to === c.did);
+    if (!mine.length) return "";
+    const myQuotes = quotes.filter((x) => x.from === c.did);
+    const acc = accs.filter((x) => x.to === c.did).pop();
+    const refusal = refusals.filter((x) => x.from === c.did).pop();
+    let state = `<span class="asked">asked…</span>`, what = "";
+    const q = myQuotes[myQuotes.length - 1];
+    if (q) { what = `${q.quote.terms.pallets} pallet(s) of ${q.quote.category}${q.quote.terms.partial ? " (partial)" : ""}${q.quote.terms.arrivesIn ? ", arrives in " + q.quote.terms.arrivesIn : ""}`; state = `<span class="offered">offers ${euros(q.quote.amountMinor)}</span>`; }
+    if (q && r.phase !== "asking" && r.phase !== "choosing" && !chosen.has(c.name) && !acc) state = `<span class="notchosen">${euros(q.quote.amountMinor)} · not chosen</span>`;
+    if (!q && refusal) { state = `<span class="declined">declines</span>`; what = refusal.reason; }
+    if (acc) state = acc.status === "confirmed" ? `<span class="confirmed">✓ confirmed ${euros(acc.amountMinor)}</span>` : acc.status === "refused" ? `<span class="refused">refused</span>` : `<span class="pending">accepted, waiting…</span>`;
+    return `<div class="deal"><div><div class="who">${esc(c.name)}</div><div class="role">${esc(c.role)}</div></div><div class="state">${state}</div><div class="what">${esc(what)}</div></div>`;
+  }).join("");
+  $("deals").innerHTML = rows || `<div class="empty">No company asked yet.</div>`;
+  const l = b.ledger;
+  $("committed").textContent = euros(l.committedMinor);
+  $("budget").textContent = euros(l.budgetMinor);
+  $("spent").style.width = Math.min(100, (l.committedMinor / Math.max(1, l.budgetMinor)) * 100) + "%";
+}
+
+function renderGroup(r, g) {
+  if (!r || !r.group || !g) return;
+  $("grouplock").textContent = "· MLS, the host cannot read it";
+  const names = Object.fromEntries(r.directory.map((c) => [c.did, c.name]));
+  const ev = g.events || [];
+  const joined = ev.filter((e) => e.kind === "membership" && e.event === "added").map((e) => names[e.member] || e.member);
+  const msgs = ev.filter((e) => e.kind === "message");
+  $("group").innerHTML = `<div style="font-size:13px;color:var(--mut)">Members: store 0412${joined.length ? ", " + joined.map(esc).join(", ") : ""}</div>` +
+    msgs.map((m) => `<div class="msg"><div class="who">${m.direction === "out" ? "store 0412" : esc(names[m.from] || m.from)}</div>${esc(m.plaintext.text || JSON.stringify(m.plaintext.payload))}</div>`).join("");
+}
+
+async function poll() {
+  const [sim, rescue, quotes] = await Promise.all([get("/store/sim"), get("/rescue"), get("/anp/quotes")]);
+  const group = rescue && rescue.group ? await get("/anp/groups/member?group=" + encodeURIComponent(rescue.group)) : null;
+  state = { sim, rescue, quotes, group };
+  renderSim(sim, rescue); renderRescue(rescue); renderDeals(rescue, quotes); renderGroup(rescue, group);
+}
+setInterval(poll, 700);
+poll();
+
+// ── the presenter (?autoplay=1): the night, with a caption for each step ──────────────────────────────
+// each caption stays up at least `min` ms (the agent is quicker than a viewer reads)
+let capAt = 0, capMin = 0;
+async function caption(text, min = 6500) {
+  const wait = capAt + capMin - Date.now();
+  if (wait > 0) await sleep(wait);
+  $("caption").textContent = text;
+  window.postMessage({ cap: text }, "*");
+  capAt = Date.now(); capMin = min;
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function until(pred, ms = 240000) { const t = Date.now(); while (Date.now() - t < ms) { await poll(); if (pred(state)) return true; await sleep(500); } return false; }
+async function ticks(minutes, step, every) { for (let m = 0; m < minutes; m += step) { await act("/store/sim/advance", { minutes: Math.min(step, minutes - m) }); await poll(); await sleep(every); } }
+async function autoplay() {
+  document.body.classList.add("autoplay");
+  await until((s) => s.sim && s.rescue);
+  await caption("01:50. Store 0412 is closed for the night. Four cold units, about €40,000 of stock, nobody on site.");
+  await ticks(4, 1, 700);
+  await act("/store/sim/fault", { unit: "frz-1", fault: "defrost-stuck" });
+  await act("/store/sim/fault", { unit: "chl-1", fault: "compressor-off" });
+  await caption("A controller fault: freezer 1 is stuck in defrost with its heaters on, and the dairy chiller's compressor stops.");
+  await ticks(46, 2, 330);
+  await caption("Fifty minutes later the ice cream and frozen vegetables are past their safety limit: lost.");
+  await sleep(4000);
+  await act("/store/sim/fault", { unit: "frz-2", fault: "defrost-stuck" });
+  await act("/store/sim/advance", { minutes: 1 });
+  await poll();
+  await caption("Then freezer 2 fails too: €17,800 of frozen meat and fish, about 45 minutes from being lost.");
+  await sleep(5000);
+  await act("/rescue/start", {});
+  await caption("The store's agent takes over: it ranks the stock by risk and value, and asks every company it may call on at once.");
+  await until((s) => s.rescue && ["choosing", "awaiting-approval", "done"].includes(s.rescue.phase));
+  await caption("Quotes come back, each signed by its company's DID. The agent chooses through rules that sit between its plan and its signature.");
+  await until((s) => s.rescue && ["awaiting-approval", "done"].includes(s.rescue.phase));
+  await sleep(2500);
+  await caption("The plan costs €10,500, over the €6,000 it may commit on its own. It signs nothing and asks the duty manager.");
+  await sleep(7000);
+  await act("/rescue/approve", { budget: "11000" });
+  await caption("The duty manager approves from a phone: the budget goes to €11,000.");
+  await sleep(3000);
+  await caption("The agent accepts each offer. Every company checks the store's token itself before it confirms.");
+  await until((s) => s.rescue && ["coordinating", "proving", "done"].includes(s.rescue.phase));
+  await caption("An encrypted group for everyone involved: the plan is posted there, and the group host cannot read it.");
+  await until((s) => s.rescue && s.rescue.phase === "done");
+  await sleep(2500);
+  await caption("Done: six deals confirmed and every one audited offline, as the insurer will check them in the morning.");
+  await sleep(9000);
+  window.postMessage("autoplay-done", "*");
+  document.title = "autoplay-done";
+}
+if (new URLSearchParams(location.search).get("autoplay") === "1") autoplay();
+</script>
+</body>
+</html>

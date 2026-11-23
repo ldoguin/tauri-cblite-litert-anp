@@ -48,6 +48,7 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .route("/link", get(link_status).post(link_set))
         .route("/demo", get(demo_page))
         .route("/demo/all", get(demo_all_page))
+        .route("/demo/rescue", get(rescue_page))
         .route("/security/revocations", post(post_revocation))
         .route("/agents/:node/agent-card.json", get(peer_card))
         .route("/agents/:name/:fingerprint/did.json", get(did_document))
@@ -675,6 +676,12 @@ async fn post_revocation(State(hub): State<Arc<Hub>>, body: Bytes) -> Response {
 /// The field-inspection demo dashboard (see the README); served by every node, it shows that node's view.
 async fn demo_page() -> axum::response::Html<&'static str> {
     axum::response::Html(include_str!("demo.html"))
+}
+
+/// The cold-stock rescue control room (see `rescue.html`): the store's cold room, its agent, the companies, the group. It reads this
+/// node's own endpoints, which answer only this machine; `?autoplay=1` plays the night with captions (what the recording films).
+async fn rescue_page() -> axum::response::Html<&'static str> {
+    axum::response::Html(include_str!("rescue.html"))
 }
 
 /// The control-room view: the three devices side by side with a live topology (see `demo-all.html`).

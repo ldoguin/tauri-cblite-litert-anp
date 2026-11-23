@@ -3,6 +3,8 @@
 //   3. an outro card; the frames are put together by ffmpeg.
 //
 //   node scripts/video/record.mjs --url http://127.0.0.1:18801/demo/all?autoplay=1 --out recordings/anp-scenario.mp4 [--chrome PATH] [--ffmpeg PATH]
+//        [--intro NAME --outro NAME --explainers FILE.js]   (cards NAME.html and the explainers file, next to this script; `cargo xtask cold-rescue
+//        --record` uses rescue-intro, rescue-outro and rescue-explainers.js)
 //
 // Needs Node 22+ (the built-in WebSocket client), Chrome or Edge, and ffmpeg.
 import { spawn, spawnSync } from "node:child_process";
@@ -18,6 +20,8 @@ const out = path.resolve(arg("--out", "anp-scenario.mp4"));
 const chromePath = arg("--chrome", ["C:/Program Files/Google/Chrome/Application/chrome.exe", "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => fs.existsSync(p)));
 const ffmpeg = arg("--ffmpeg", "ffmpeg");
 const introSecs = Number(arg("--intro-secs", "9")), outroSecs = Number(arg("--outro-secs", "8")), maxSecs = Number(arg("--max-secs", "420"));
+// which cards and explainers (files next to this script): the field-inspection ones unless told otherwise
+const introCard = arg("--intro", "intro"), outroCard = arg("--outro", "outro"), explainers = arg("--explainers", "explainers.js");
 if (!url || !chromePath) { console.error("usage: node record.mjs --url URL --out FILE [--chrome PATH]"); process.exit(2); }
 
 const W = 1920, H = 1080, port = 9300 + Math.floor(Math.random() * 500);
@@ -55,10 +59,10 @@ async function card(name, secs) {
   entries.push({ file, secs });
 }
 
-await card("intro", introSecs);
+await card(introCard, introSecs);
 
 // the scenario
-await send("Page.addScriptToEvaluateOnNewDocument", { source: fs.readFileSync(path.join(here, "explainers.js"), "utf8") });
+await send("Page.addScriptToEvaluateOnNewDocument", { source: fs.readFileSync(path.join(here, explainers), "utf8") });
 let n = 0;
 on("Page.screencastFrame", (p) => {
   const file = path.join(work, `f${String(n++).padStart(6, "0")}.jpg`);
@@ -79,7 +83,7 @@ await send("Page.stopScreencast");
 console.log(`scenario ${done ? "finished" : "TIMED OUT"} after ${Math.round((Date.now() - t0) / 1000)} s, ${n} frames`);
 handlers.delete("Page.screencastFrame");
 
-await card("outro", outroSecs);
+await card(outroCard, outroSecs);
 ws.close(); cleanup();
 
 // a frame lasts until the next one arrives

@@ -5,6 +5,7 @@
 //! The PowerShell scripts in `scripts/` are the same checks and still there; tasks move here one at a time.
 
 mod biscuit;
+mod coldrescue;
 mod coldstore;
 mod crossos;
 mod did;
@@ -60,6 +61,7 @@ fn main() {
         "e2e-coldstore" => coldstore::run(),
         "e2e-quotes" => quotes::run(),
         "e2e-rescue" => rescue::run(),
+        "cold-rescue" => coldrescue::run(&args),
         "group-host" | "p6-host" => grouphost::run(),
         "all" => {
             let mut worst = 0;
@@ -101,6 +103,7 @@ fn main() {
                 eprintln!("  {n:<16} {d}");
             }
             eprintln!("  all              every task above that needs no other machine (not e2e-cross-os, e2e-second-host)");
+            eprintln!("  cold-rescue      the demo: the night's ten nodes and the control room at http://127.0.0.1:19102/demo/rescue [--record OUT.mp4]");
             std::process::exit(if task.is_empty() || task == "help" { 0 } else { 2 });
         }
     };
