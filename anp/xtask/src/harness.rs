@@ -35,6 +35,33 @@ pub fn require_bins(names: &[&str]) -> Result<(), String> {
             return Err(format!("{} is not built: run `cargo build -p anp-node -p anp-authz -p anp-ad -p anp-search -p anp-wns -p anp-meta` first", bin(n).display()));
         }
     }
+    place_cblite_dll()
+}
+
+/// On Windows the programs load `cblite.dll` from their own folder, and cargo leaves it in the build script's output
+/// (`debug/build/couchbase_lite-*/out`). Copy the newest one next to them when it is missing or older, so a fresh
+/// target folder works without a manual step. Elsewhere the library is found through the rpath: nothing to do.
+fn place_cblite_dll() -> Result<(), String> {
+    if !cfg!(windows) {
+        return Ok(());
+    }
+    let debug = target_dir().join("debug");
+    let newest = std::fs::read_dir(debug.join("build"))
+        .map_err(|e| format!("{}: {e}", debug.join("build").display()))?
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("couchbase_lite-"))
+        .map(|e| e.path().join("out").join("cblite.dll"))
+        .filter_map(|p| p.metadata().and_then(|m| m.modified()).ok().map(|t| (t, p)))
+        .max();
+    let Some((built, src)) = newest else {
+        return Err(format!("no cblite.dll under {}: build anp-node first", debug.join("build").display()));
+    };
+    let dst = debug.join("cblite.dll");
+    let current = dst.metadata().and_then(|m| m.modified()).ok();
+    if current.map_or(true, |t| t < built) {
+        std::fs::copy(&src, &dst).map_err(|e| format!("copy {} to {}: {e}", src.display(), dst.display()))?;
+        println!("(copied cblite.dll next to the programs, from {})", src.display());
+    }
     Ok(())
 }
 

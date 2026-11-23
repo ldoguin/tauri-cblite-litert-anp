@@ -6,15 +6,20 @@
 //!                                           standard client talks to *this*
 //!                                           gateway with `tenant = {node}`
 //! * `POST /`                                JSON-RPC 2.0
+//! * `POST /anp/direct/conversations`        (this machine only) send a direct message: `{"to": DID, "text": "..."}`
+//!                                           or `{"to": DID, "payload": {...}}`; `"new_session": true` forces a new key exchange
+//! * `GET  /anp/direct/conversations[?peer=DID]`  (this machine only) the conversations, or one of them
 
+use std::collections::HashMap;
 use std::convert::Infallible;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
     body::Bytes,
-    extract::{Path, Query, State},
-    http::StatusCode,
+    extract::{ConnectInfo, Path, Query, State},
+    http::{HeaderMap, StatusCode},
     response::{
         sse::{Event, KeepAlive, Sse},
         IntoResponse, Response,
@@ -50,6 +55,7 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .route("/.well-known/handle/:local", get(handle_resolution))
         .route("/anp/direct", post(direct_messaging_rpc))
         .route("/anp/p5", post(direct_messaging_rpc)) // the old path, kept for peers that were given it
+        .route("/anp/direct/conversations", get(conversations_get).post(conversations_post))
         .route("/anp/meta", post(meta_message))
         .route("/anp/meta/ws", get(meta_ws))
         .route("/anp/groups", post(group_host_rpc))
@@ -67,7 +73,54 @@ pub fn router(hub: Arc<Hub>) -> Router {
 }
 
 pub async fn serve(hub: Arc<Hub>, listener: tokio::net::TcpListener) -> std::io::Result<()> {
-    axum::serve(listener, router(hub)).await
+    // with the caller's address, so that the operator's controls can tell a local caller from a remote one
+    axum::serve(listener, router(hub).into_make_service_with_connect_info::<SocketAddr>()).await
+}
+
+/// A caller on this machine talking to the node directly. A request that came through a proxy is refused even from
+/// loopback: a reverse proxy on the same host would otherwise make every remote caller look local.
+pub fn local_caller(addr: Option<&ConnectInfo<SocketAddr>>, headers: &HeaderMap) -> bool {
+    let proxied = ["forwarded", "x-forwarded-for", "x-forwarded-host", "x-real-ip"].iter().any(|h| headers.contains_key(*h));
+    !proxied && addr.map_or(false, |c| c.0.ip().is_loopback())
+}
+
+fn not_local() -> Response {
+    (StatusCode::FORBIDDEN, "only from this machine, not through a proxy\n").into_response()
+}
+
+/// The conversations this node has had over direct messages, or the messages of one (`?peer=DID`).
+async fn conversations_get(State(hub): State<Arc<Hub>>, addr: Option<ConnectInfo<SocketAddr>>, headers: HeaderMap, Query(q): Query<HashMap<String, String>>) -> Response {
+    if !local_caller(addr.as_ref(), &headers) {
+        return not_local();
+    }
+    let Some(direct) = hub.direct_messaging() else { return (StatusCode::NOT_FOUND, "direct messaging is off (--direct-messaging)\n").into_response() };
+    match q.get("peer") {
+        Some(p) => Json(json!({ "peer": p, "messages": direct.conversation(p) })).into_response(),
+        None => Json(json!({ "conversations": direct.conversations() })).into_response(),
+    }
+}
+
+/// Send a direct message as this node: in the session it has with the peer, or by starting one.
+async fn conversations_post(State(hub): State<Arc<Hub>>, addr: Option<ConnectInfo<SocketAddr>>, headers: HeaderMap, body: Bytes) -> Response {
+    if !local_caller(addr.as_ref(), &headers) {
+        return not_local();
+    }
+    let Some(direct) = hub.direct_messaging() else { return (StatusCode::NOT_FOUND, "direct messaging is off (--direct-messaging)\n").into_response() };
+    let v: Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::BAD_REQUEST, format!("{e}\n")).into_response(),
+    };
+    let Some(to) = v["to"].as_str() else { return (StatusCode::BAD_REQUEST, "give the peer's DID as \"to\"\n").into_response() };
+    let plain = match crate::direct_messaging::plaintext_of(&format!("app-{}", uuid::Uuid::new_v4()), v["text"].as_str(), v.get("payload")) {
+        Ok(p) => p,
+        Err(e) => return (StatusCode::BAD_REQUEST, format!("{e}\n")).into_response(),
+    };
+    // `"new_session": true` starts a fresh session (a new key exchange) even if there is one
+    let sent = if v["new_session"] == json!(true) { direct.open(to, &plain).await } else { direct.send(to, &plain).await };
+    match sent {
+        Ok(id) => Json(json!({ "message_id": id, "to": to })).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, format!("{e}\n")).into_response(),
+    }
 }
 
 /// Trust status: whether documents are signed and verified, who is enrolled,

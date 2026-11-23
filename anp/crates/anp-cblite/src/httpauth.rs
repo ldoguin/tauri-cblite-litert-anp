@@ -175,6 +175,12 @@ pub fn is_public(path: &str) -> bool {
         || path.ends_with("/agent-card.json")
 }
 
+/// The node operator's own controls: no peer ever signs for them, so they are not ANP-02 calls; the handler answers
+/// only callers on this machine (see `server::local_caller`).
+pub fn is_local_control(path: &str) -> bool {
+    path == "/anp/direct/conversations"
+}
+
 fn unauthorized(origin: &str, why: &str) -> Response {
     let realm = origin.split("://").nth(1).unwrap_or(origin);
     let mut r = (StatusCode::UNAUTHORIZED, format!("unauthorized: {why}\n")).into_response();
@@ -192,7 +198,7 @@ pub struct Caller(pub String);
 
 pub async fn middleware(State(hub): State<Arc<Hub>>, req: Request<Body>, next: Next) -> Response {
     let Some(auth) = hub.http_auth() else { return next.run(req).await };
-    if is_public(req.uri().path()) {
+    if is_public(req.uri().path()) || is_local_control(req.uri().path()) {
         return next.run(req).await;
     }
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
