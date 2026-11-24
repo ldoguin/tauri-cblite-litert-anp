@@ -496,6 +496,8 @@ and real use start it with no pace. The recording tools (`scripts/video/record.m
 the rescue uses `rescue-intro.html`, `rescue-outro.html` and `rescue-explainers.js`. Like the rest of the project, the store and the companies
 are fictional and the agent plans by rules; the protocol, signatures and encryption are real.
 
+To present this live, see [`DEMO.md`](DEMO.md): what to install, how to build, the day-before setup, a timed run of show and what to do when something breaks.
+
 ### The fleet: records, Couchbase Server and Sync Gateway
 
 **Records (F1).** The store's agent writes each run as one signed document in the replicated `rescue` collection, `<node>::<run>`: the
