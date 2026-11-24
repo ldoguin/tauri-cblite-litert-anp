@@ -31,6 +31,79 @@ Not needed for this demo: WSL, the Tauri app, the on-device model (that is a sep
 The demo runs on one machine: about fourteen processes (the nodes) plus the Docker cluster. Close heavy applications first. Under load a company
 can answer slowly; the agent waits up to 120 seconds for each answer, but the show feels slow if the machine is struggling.
 
+### Installing the dependencies
+
+**Windows (the route this was built and tested on).** It uses [scoop](https://scoop.sh) for the tools, the GNU flavour of Rust's Windows toolchain, and MSYS2's
+MinGW compiler. The MSVC toolchain is installed on that machine too, but the demo was built with the GNU one; I have not tried it with MSVC. What I checked: the
+tool list and versions below are what is installed on the build machine, and the scoop package names exist. What I did not do: replay these commands on a clean
+machine, so if one fails, the check block at the end of this section says which tool is missing.
+
+1. Install scoop if you do not have it (from a normal, non-administrator PowerShell):
+
+   ```powershell
+   Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+   irm get.scoop.sh | iex
+   ```
+
+2. Install the tools:
+
+   ```powershell
+   scoop install git rustup msys2 llvm cmake ninja k3d helm nodejs-lts ffmpeg
+   ```
+
+   `nodejs-lts` and `ffmpeg` are only for recording the backup video. Docker Desktop (next step) ships `kubectl`; if you run Docker some other way, add
+   `kubectl` to that command.
+
+3. Install Rust and pick the GNU toolchain:
+
+   ```powershell
+   rustup toolchain install stable-x86_64-pc-windows-gnu
+   rustup default stable-x86_64-pc-windows-gnu
+   ```
+
+4. Give MinGW to the build: install the compiler with MSYS2's package manager, then put its `bin` folder on your PATH.
+
+   ```powershell
+   & "$(scoop prefix msys2)\usr\bin\bash.exe" -lc "pacman -S --noconfirm mingw-w64-x86_64-toolchain"
+   [Environment]::SetEnvironmentVariable("Path", "$(scoop prefix msys2)\mingw64\bin;" + [Environment]::GetEnvironmentVariable("Path", "User"), "User")
+   ```
+
+   Open a new terminal afterwards. `gcc --version` should answer.
+
+5. Tell `bindgen` where LLVM is. This is what a build error about a missing header or `libclang` is about. For the current terminal:
+
+   ```powershell
+   $env:LIBCLANG_PATH = "$(scoop prefix llvm)\bin"
+   $clang = (Get-ChildItem "$(scoop prefix llvm)\lib\clang" | Select-Object -First 1).FullName -replace '\\','/'
+   $env:BINDGEN_EXTRA_CLANG_ARGS = "-I$clang/include"
+   ```
+
+   To keep them for every terminal, set the same two variables with `[Environment]::SetEnvironmentVariable("LIBCLANG_PATH", ..., "User")`. On the machine this
+   was built on, `LIBCLANG_PATH` is set permanently and `BINDGEN_EXTRA_CLANG_ARGS` is set in the terminal that builds.
+
+6. Install Docker Desktop from <https://www.docker.com/products/docker-desktop/> (with the WSL 2 backend), start it, and give its VM at least 4 GB:
+   with the WSL 2 backend that is `memory=6GB` under `[wsl2]` in `%UserProfile%\.wslconfig`, then `wsl --shutdown` and start Docker again. Check with
+   `docker info --format "{{.MemTotal}}"` (it prints bytes; 4 GB is about 4300000000).
+
+**macOS and Linux (not tested for this demo; the steps are the usual ones).**
+
+- macOS: `brew install rustup llvm cmake k3d kubectl helm node ffmpeg`, then `rustup default stable`, Docker Desktop with at least 4 GB, and
+  `export LIBCLANG_PATH="$(brew --prefix llvm)/lib"`.
+- Linux (Debian or Ubuntu): `sudo apt install build-essential cmake clang libclang-dev curl git nodejs ffmpeg`, Rust from <https://rustup.rs>, Docker Engine, and
+  `k3d`, `kubectl` and `helm` from their own install pages. The node builds on Linux (that is how the on-device model check runs, in WSL); the demo tasks are written in
+  Rust so they run the same.
+
+**Check everything before you build:**
+
+```powershell
+rustc --version; gcc --version; cmake --version
+docker --version; k3d version; kubectl version --client; helm version --short
+node --version; ffmpeg -version
+```
+
+Each should print a version. This is the setup it was built with: rustc 1.99, gcc from MSYS2 MinGW, cmake 4.4, LLVM 21.1, Docker 28.4, k3d 5.9, kubectl 1.34, helm 4.3,
+Node 24 and ffmpeg 9. Newer versions are likely fine; I have not tried older ones.
+
 ## 2. Build
 
 From the repository root:
