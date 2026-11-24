@@ -156,6 +156,10 @@ pub struct Hub {
     quote_buyer: Mutex<Option<Arc<crate::quotes::QuoteBuyer>>>,
     /// The store's agent (see `rescue`).
     rescue: Mutex<Option<Arc<crate::rescue::Rescue>>>,
+    /// How this node replicates (set at start): {mode, peers, gateway}; shown by GET /couchbase.
+    replication: Mutex<Value>,
+    /// What the Sync Gateway this node replicates with says (polled): online, update sequence, documents per collection.
+    gateway_state: Mutex<Value>,
 }
 
 impl Hub {
@@ -193,6 +197,8 @@ impl Hub {
             quote_seller: Mutex::new(None),
             quote_buyer: Mutex::new(None),
             rescue: Mutex::new(None),
+            replication: Mutex::new(Value::Null),
+            gateway_state: Mutex::new(Value::Null),
         });
 
         // Task changes (local or replicated) -> broadcast for waiters/streams.
@@ -308,9 +314,12 @@ impl Hub {
         self.group_member.lock().unwrap().clone()
     }
 
-    /// Run the simulated cold room at `speed` simulated minutes per second (0: only when advanced).
-    pub fn set_store_sim(&self, node: &str, speed: u32) {
+    /// Run the simulated cold room at `speed` simulated minutes per second (0: only when advanced), as the site `site` (default: store-0412).
+    pub fn set_store_sim(&self, node: &str, speed: u32, site: Option<&str>) {
         let s = Arc::new(crate::coldstore::ColdStoreSim::new(node, self.docs.clone(), speed));
+        if let Some(site) = site {
+            s.set_site(site);
+        }
         if tokio::runtime::Handle::try_current().is_ok() {
             s.start();
         }
@@ -353,6 +362,19 @@ impl Hub {
         let buyer = self.quote_buyer().ok_or("the rescue agent needs a buying desk (--spend-token)")?;
         *self.rescue.lock().unwrap() = Some(Arc::new(crate::rescue::Rescue::new(directory, search, store, buyer, self.group_member())));
         Ok(())
+    }
+
+    pub fn set_replication(&self, v: Value) {
+        *self.replication.lock().unwrap() = v;
+    }
+    pub fn replication(&self) -> Value {
+        self.replication.lock().unwrap().clone()
+    }
+    pub fn set_gateway_state(&self, v: Value) {
+        *self.gateway_state.lock().unwrap() = v;
+    }
+    pub fn gateway_state(&self) -> Value {
+        self.gateway_state.lock().unwrap().clone()
     }
 
     pub fn rescue(&self) -> Option<Arc<crate::rescue::Rescue>> {

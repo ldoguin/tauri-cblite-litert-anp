@@ -19,6 +19,7 @@
   <li><b>Spent within limits the other side enforced:</b> a Biscuit token bound to the store's DID, checked by every seller.</li>
   <li><b>Kept a record no one can rewrite:</b> €10,500 committed in six deals, each four signed messages that audit offline.</li>
   <li><b>Coordinated in private:</b> an MLS group whose host relays what it cannot read.</li>
+  <li><b>Seen from head office, inside the retailer:</b> every store's signed records replicate to it, peer to peer or through Couchbase Sync Gateway; the authority's revocations and new tokens flow back the same way.</li>
 </ul>
-<div class="run">Run it yourself: <code>cargo xtask cold-rescue</code> · checked end to end by <code>cargo xtask e2e-rescue</code></div>
+<div class="run">Run it yourself: <code>cargo xtask cold-rescue --fleet</code> · checked end to end by <code>e2e-rescue</code>, <code>e2e-fleet</code>, <code>e2e-approval</code>, <code>e2e-revocation</code></div>
 </body></html>

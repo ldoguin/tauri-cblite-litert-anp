@@ -181,7 +181,7 @@ impl Authority {
             }
         }
         let mut src = format!(
-            "node(\"{}\");\nnode_key(\"{}\");\nright(\"agents\", \"own\");\nright(\"tasks\", \"own\");\nright(\"telemetry\", \"own\");\nright(\"rescue\", \"own\");\nright(\"approvals\", \"own\");\n",
+            "node(\"{}\");\nnode_key(\"{}\");\nright(\"agents\", \"own\");\nright(\"tasks\", \"own\");\nright(\"telemetry\", \"own\");\nright(\"rescue\", \"own\");\nright(\"approvals\", \"own\");\nright(\"tokens\", \"own\");\n",
             grant.node, grant.node_key_b64
         );
         for t in &grant.inbox_targets {
@@ -542,6 +542,13 @@ pub fn admit_with(token_b64: &str, root: &PublicKey, node: &str, did: Option<&st
     authorizer.authorize().map_err(|e| format!("token does not admit this node: {e}"))?;
     Ok(Authorized { revocation_ids: token.revocation_identifiers().iter().map(|id| hex(id)).collect() })
 }
+/// The revocation ids of a token issued by `root` (hex, one per block), for a caller that keeps a deny-list. Errors when the token is not
+/// from that authority; says nothing about expiry or what the token allows.
+pub fn token_revocation_ids(token_b64: &str, root: &PublicKey) -> Result<Vec<String>, String> {
+    let token = Biscuit::from_base64(token_b64, *root).map_err(|e| format!("invalid token: {e}"))?;
+    Ok(token.revocation_identifiers().iter().map(|id| hex(id)).collect())
+}
+
 /// A human-readable dump of a token (blocks, facts, checks) and its revocation ids.
 pub fn inspect(token_b64: &str, root: &PublicKey) -> Result<String, String> {
     let token = Biscuit::from_base64(token_b64, *root).map_err(|e| format!("invalid token: {e}"))?;

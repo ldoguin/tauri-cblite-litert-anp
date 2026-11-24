@@ -30,7 +30,7 @@ const OPERATOR_CHART: &str = "2.93.0";
 pub(crate) const DB: &str = "anp";
 pub(crate) const BUCKET: &str = "fleet";
 pub(crate) const SCOPE: &str = "a2a";
-const COLLECTIONS: [&str; 7] = ["inbox", "tasks", "agents", "revocations", "telemetry", "rescue", "approvals"];
+const COLLECTIONS: [&str; 8] = ["inbox", "tasks", "agents", "revocations", "telemetry", "rescue", "approvals", "tokens"];
 pub(crate) const ADMIN: &str = "http://127.0.0.1:4985";
 const PUBLIC: &str = "http://127.0.0.1:4984";
 pub const CONSOLE: &str = "http://127.0.0.1:18091";
@@ -84,8 +84,22 @@ const PORTS: [u16; 3] = [18995, 18996, 18997];
 
 /// A Sync Gateway user for a node: logged in as the node's id, reading the channels given (per collection).
 pub(crate) fn put_user(name: &str, password: &str, channels: &[String]) -> Result<(), String> {
+    put_user_roles(name, password, channels, &[])
+}
+
+/// A role (a name a sync function can require); made if it does not exist.
+pub(crate) fn put_role(name: &str) -> Result<(), String> {
+    let (s, b) = http("PUT", &format!("{ADMIN}/{DB}/_role/{name}"), Some(&json!({ "name": name })), None)?;
+    if s >= 300 {
+        return Err(format!("creating role {name}: {s} {b}"));
+    }
+    Ok(())
+}
+
+/// [`put_user`], with roles (`head-office` may write the authority's documents).
+pub(crate) fn put_user_roles(name: &str, password: &str, channels: &[String], roles: &[&str]) -> Result<(), String> {
     let access: serde_json::Map<String, Value> = COLLECTIONS.iter().map(|c| (c.to_string(), json!({ "admin_channels": channels }))).collect();
-    let user = json!({ "name": name, "password": password, "collection_access": { SCOPE: access } });
+    let user = json!({ "name": name, "password": password, "collection_access": { SCOPE: access }, "admin_roles": roles });
     let (s, b) = http("PUT", &format!("{ADMIN}/{DB}/_user/{name}"), Some(&user), None)?;
     if s >= 300 {
         return Err(format!("creating user {name}: {s} {b}"));

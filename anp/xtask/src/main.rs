@@ -20,6 +20,7 @@ mod hardened;
 mod harness;
 mod mesh;
 mod quotes;
+mod revocation;
 mod rescue;
 mod tlsfront;
 mod grouphost;
@@ -74,6 +75,7 @@ fn main() {
         "fleet-down" => fleet::down(),
         "e2e-fleet" => fleet::e2e(),
         "e2e-approval" => approval::run(),
+        "e2e-revocation" => revocation::run(),
         "e2e-fleet-view" => fleetview::run(&args),
         "all" => {
             let mut worst = 0;
@@ -120,6 +122,7 @@ fn main() {
             eprintln!("  cold-rescue      the demo: the night's ten nodes and the control room at http://127.0.0.1:19102/demo/rescue [--record OUT.mp4]");
             eprintln!("  fleet-up         the fleet's Couchbase Server and Sync Gateway in a local k3d cluster (needs docker, k3d, kubectl, helm) [--no-check]");
             eprintln!("  fleet-down       delete that k3d cluster and its data");
+            eprintln!("  e2e-revocation   the authority revokes a store's spending token and issues a new one, both through Sync Gateway (needs fleet-up first)");
             eprintln!("  e2e-approval     the duty manager's approval as a document signed on a phone and replicated through Sync Gateway; a head office's is ignored (needs fleet-up first)");
             eprintln!("  e2e-fleet-view   three stores' freezers fail at once; the head office shows them, their agents' phases and spend, live (needs fleet-up first)");
             eprintln!("  e2e-fleet        two stores and a head office replicating through Sync Gateway only: channels, isolation, a cut link (needs fleet-up first)");

@@ -70,6 +70,8 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .route("/anp/quotes", get(quotes_get))
         .route("/anp/quotes/:action", post(quotes_post))
         .route("/rescues", get(rescues_get))
+        .route("/couchbase", get(couchbase_get))
+        .route("/fleet/token", post(fleet_token))
         .route("/approvals", get(approvals_get))
         .route("/approvals/decide", post(approvals_decide))
         .route("/rescue", get(rescue_get))
@@ -271,6 +273,32 @@ async fn telemetry_get(State(hub): State<Arc<Hub>>, addr: Option<ConnectInfo<Soc
     match crate::coldstore::telemetry(&hub.docs).await {
         Ok(v) => Json(json!({ "logs": v })).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}\n")).into_response(),
+    }
+}
+
+/// The Couchbase pieces of this node right now: its Couchbase Lite database, how it replicates, and the Sync Gateway's state (see `couchbase`).
+async fn couchbase_get(State(hub): State<Arc<Hub>>, addr: Option<ConnectInfo<SocketAddr>>, headers: HeaderMap) -> Response {
+    if !local_caller(addr.as_ref(), &headers) {
+        return not_local();
+    }
+    Json(crate::couchbase::describe(&hub).await).into_response()
+}
+
+/// Carry a new spending token to a store: `{store, token}`, the token as `anp-admin issue` wrote it. Signs a document `<store>::<this node>` in
+/// the replicated `tokens`; the store takes the token if it was told to accept tokens from this node and the token is the authority's, for it.
+async fn fleet_token(State(hub): State<Arc<Hub>>, addr: Option<ConnectInfo<SocketAddr>>, headers: HeaderMap, body: Bytes) -> Response {
+    if !local_caller(addr.as_ref(), &headers) {
+        return not_local();
+    }
+    let v: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let (Some(store), Some(token)) = (v["store"].as_str(), v["token"].as_str()) else {
+        return (StatusCode::BAD_REQUEST, "give {store, token}\n").into_response();
+    };
+    let id = format!("{store}::{}", hub.node_id);
+    let doc = json!({ "kind": "token", "store": store, "token": token.trim(), "by": hub.node_id, "issuedAt": chrono::Utc::now().to_rfc3339() });
+    match hub.docs.put(crate::docs::Coll::Tokens, &id, doc).await {
+        Ok(()) => Json(json!({ "token": id, "by": hub.node_id })).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, format!("{e}\n")).into_response(),
     }
 }
 
@@ -754,13 +782,13 @@ async fn demo_page() -> axum::response::Html<&'static str> {
 
 /// The cold-stock rescue control room (see `rescue.html`): the store's cold room, its agent, the companies, the group. It reads this
 /// node's own endpoints, which answer only this machine; `?autoplay=1` plays the night with captions (what the recording films).
-async fn rescue_page() -> axum::response::Html<&'static str> {
-    axum::response::Html(include_str!("rescue.html"))
+async fn rescue_page() -> axum::response::Html<String> {
+    axum::response::Html(include_str!("rescue.html").replace("<!--COUCHBASE-->", include_str!("couchbase-strip.html")))
 }
 
 /// The head office's fleet view (see `fleet.html`): every store, its failing units, its agent's phase and spend. Reads `/fleet`.
-async fn fleet_page() -> axum::response::Html<&'static str> {
-    axum::response::Html(include_str!("fleet.html"))
+async fn fleet_page() -> axum::response::Html<String> {
+    axum::response::Html(include_str!("fleet.html").replace("<!--COUCHBASE-->", include_str!("couchbase-strip.html")))
 }
 
 /// Every store whose signed records this node holds, with its units, its rescue agent's phase and its spend (see `fleet`).

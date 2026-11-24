@@ -132,6 +132,8 @@ pub struct Night {
     pub sellers: Vec<(String, String, String, PathBuf, u16)>,
     /// What `anp-admin issue` answered for the store's spending token.
     pub token_issued: (i32, String),
+    /// The retailer authority's public key (its private key is `<work>/retailer.key`).
+    pub root: String,
 }
 
 /// The store's port (its control room is `http://127.0.0.1:<STORE>/demo/rescue`).
@@ -197,7 +199,7 @@ pub fn bring_up_with(work: &Path, extra_store: &[String]) -> Result<Night, Strin
     ]
     .concat();
     nodes.push(Node::start(&work, "hq", "hq", HQ, &hq_args));
-    Ok(Night { store, others: nodes, sellers, token_issued })
+    Ok(Night { store, others: nodes, sellers, token_issued, root })
 }
 
 /// The head office's port: it holds a replica of what the store signs, and sends the store nothing.
@@ -230,13 +232,37 @@ pub fn bring_up_discovered(work: &Path) -> Result<Night, String> {
     bring_up_discovered_with(work, &[])
 }
 
+/// The two other stores of the fleet, and the head office (the demo's `--fleet`): `(node name, port, site, budget in euros)`.
+pub const FLEET_STORES: [(&str, u16, &str, &str); 2] = [("store-b", 19115, "store-0207", "6000"), ("store-c", 19116, "store-0933", "6000")];
+
 /// [`bring_up_discovered`], with more options for the store's node (an adviser model, ...).
 pub fn bring_up_discovered_with(work: &Path, extra_store: &[String]) -> Result<Night, String> {
-    println!("Ten nodes and a search agent; every DID resolved over HTTPS, nothing handed out");
+    bring_up_discovered_fleet(work, extra_store, false, false)
+}
+
+/// [`bring_up_discovered_with`], and with `fleet` two more stores (each with its cold room, buying desk and agent, over the same companies) and
+/// the head office, which replicates the stores' signed records peer to peer and shows them at `/demo/fleet` (port [`HQ`]).
+///
+/// With `gateway` (and `fleet`), the stores and the head office replicate through a Sync Gateway on 127.0.0.1:4984 (see `fleet-up`) as their own
+/// users, with the passwords in `ANP_DEMO_PW_STORE`, `_STORE_B`, `_STORE_C` and `_HQ`, instead of the head office dialling the stores.
+pub fn bring_up_discovered_fleet(work: &Path, extra_store: &[String], fleet: bool, gateway: bool) -> Result<Night, String> {
+    // the strip counts only this demo's documents in Server: the stores' (`store`, `store-b`, `store-c`) and the head office's
+    let gw = |var: &str| -> Vec<String> {
+        if fleet && gateway {
+            strs(&["--sync-gateway", "ws://127.0.0.1:4984/anp", "--sync-password-env", var, "--sync-count-prefix", "store", "--sync-count-prefix", "hq"])
+        } else {
+            vec![]
+        }
+    };
+    println!("{}", if fleet { "Ten nodes, two more stores, a head office and a search agent; every DID resolved over HTTPS" } else { "Ten nodes and a search agent; every DID resolved over HTTPS, nothing handed out" });
     let root = root_key(work, "retailer");
     let work = work.to_path_buf();
     let ca = crate::tlsfront::test_ca(&work)?;
-    let ports: Vec<u16> = [HOST, STORE].into_iter().chain(SELLERS.iter().map(|s| s.2)).collect();
+    let mut ports: Vec<u16> = [HOST, STORE].into_iter().chain(SELLERS.iter().map(|s| s.2)).collect();
+    if fleet {
+        ports.extend(FLEET_STORES.iter().map(|s| s.1));
+        ports.push(HQ);
+    }
     for p in &ports {
         ca.front(tls(*p), *p)?;
     }
@@ -284,16 +310,67 @@ pub fn bring_up_discovered_with(work: &Path, extra_store: &[String]) -> Result<N
         nodes.push(Node::start(&work, name, name, port, &extra));
         sellers.push((name.to_string(), role.to_string(), String::new(), PathBuf::new(), port));
     }
+    // the fleet's head office replicates with each store over TLS, admitted by DID (plain ws:// links to three stores drop and stall)
+    let hq_did = if fleet { did_for(&work, "hq", &format!("localhost:{}", tls(HQ)), "hq") } else { String::new() };
+    let link = |dids: &str| -> Vec<String> { if fleet { strs(&["--tls", "--admit", "--trust-did", dids]) } else { vec![] } };
     let store_args = [
         node(STORE),
+        link(&hq_did),
+        gw("ANP_DEMO_PW_STORE"),
         strs(&["--store-sim", "0", "--spend-token", &token.display().to_string(), "--spend-root", &root, "--budget", "6000", "--site", "store-0412", "--rescue-search", &search_url]),
         extra_store.to_vec(),
     ]
     .concat();
     let store = Node::start(&work, "store", "store", STORE, &store_args);
+    if fleet {
+        // two more stores, each its own node with a spending token from the same authority, and a head office that replicates the three stores'
+        // signed records peer to peer (plain, on this machine) and trusts their DIDs
+        let mut dids = vec![store_did.clone()];
+        let mut p2p = vec![store.p2p_port().ok_or("the store printed no P2P port")?];
+        for (name, port, site, budget) in FLEET_STORES {
+            let did = did_for(&work, name, &format!("localhost:{}", tls(port)), name);
+            let key = std::fs::read_to_string(work.join(name).join("node.pub")).map_err(|e| e.to_string())?.trim().to_string();
+            let tok = work.join(format!("{name}.token"));
+            let issued = run_tool(
+                "anp-admin",
+                &strs(&[
+                    "issue", "--root", &work.join("retailer.key").display().to_string(), "--node", name, "--key", &key, "--did", &did, "--days", "1",
+                    "--spend-cap", "6000", "--currency", "EUR", "--spend-category", "transport,storage,donation,coverage,restock", "--spend-for", site,
+                    "--out", &tok.display().to_string(),
+                ]),
+            );
+            if issued.0 != 0 {
+                return Err(format!("issuing {name}'s spending token: {}", issued.1));
+            }
+            let args = [
+                node(port),
+                link(&hq_did),
+                gw(&format!("ANP_DEMO_PW_{}", name.to_uppercase().replace('-', "_"))),
+                strs(&["--store-sim", "0", "--spend-token", &tok.display().to_string(), "--spend-root", &root, "--budget", budget, "--site", site, "--rescue-search", &search_url]),
+            ]
+            .concat();
+            let n = Node::start(&work, name, name, port, &args);
+            p2p.push(n.p2p_port().ok_or("a store printed no P2P port")?);
+            nodes.push(n);
+            dids.push(did);
+        }
+        let mut hq_args = strs(&["--did-host", &format!("localhost:{}", tls(HQ)), "--tls", "--admit"]);
+        for d in &dids {
+            hq_args.extend(strs(&["--trust-did", d]));
+        }
+        if gateway {
+            // through Sync Gateway: the head office reads every store's channel there and dials nobody
+            hq_args.extend(gw("ANP_DEMO_PW_HQ"));
+        } else {
+            for p in &p2p {
+                hq_args.extend(strs(&["--connect", &format!("wss://127.0.0.1:{p}/a2a")]));
+            }
+        }
+        nodes.push(Node::start(&work, "hq", "hq", HQ, &hq_args));
+    }
     // the companies register themselves; the search agent verifies each description before it lists it
     poll(120, 500, || search_rpc("list", json!({}))["result"]["total"] == 8);
-    Ok(Night { store, others: nodes, sellers, token_issued })
+    Ok(Night { store, others: nodes, sellers, token_issued, root })
 }
 
 /// `cargo xtask e2e-discovery`: the night with discovery, checked.

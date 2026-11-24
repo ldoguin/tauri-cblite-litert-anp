@@ -124,6 +124,13 @@ struct Args {
     sync_password_env: Option<String>,
     /// The rescue agent acts only on approvals signed by these nodes, as documents (`--rescue` agents; repeatable).
     duty_managers: Vec<String>,
+    /// The authority that issues the fleet's spending tokens, for a node that is not in Biscuit mode: its signed revocations are accepted (a
+    /// buyer's own `--spend-root` is the same key and does the same).
+    authority_root: Option<String>,
+    /// A store takes a new spending token from a document carried by this node (repeatable; see `POST /fleet/token`).
+    token_from: Vec<String>,
+    /// The Couchbase strip counts only the gateway's documents whose id starts with one of these (repeatable): a demo's own, not what earlier runs left.
+    sync_count_prefixes: Vec<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -186,6 +193,9 @@ fn parse_args() -> Result<Args, String> {
         sync_user: None,
         sync_password_env: None,
         duty_managers: vec![],
+        authority_root: None,
+        token_from: vec![],
+        sync_count_prefixes: vec![],
     };
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
@@ -273,6 +283,9 @@ fn parse_args() -> Result<Args, String> {
             "--sync-user" => a.sync_user = Some(v()?),
             "--sync-password-env" => a.sync_password_env = Some(v()?),
             "--duty-manager" => a.duty_managers.push(v()?),
+            "--authority-root" => a.authority_root = Some(v()?),
+            "--token-from" => a.token_from.push(v()?),
+            "--sync-count-prefix" => a.sync_count_prefixes.push(v()?),
             "--direct-messaging" | "--p5" => a.direct_messaging = true,
             "--direct-peer" | "--p5-peer" => a.direct_peers.push(v()?),
             "--e2ee" => {
@@ -451,7 +464,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 for d in &args.trust_dids {
                     t.trust_did(d)?;
                 }
-                t
+                // the authority that issues the fleet's spending tokens: its revocations are accepted (a buyer's --spend-root is that key)
+                match args.authority_root.as_ref().or(args.spend_root.as_ref()) {
+                    Some(root) if !printing => t.with_authority(root)?,
+                    _ => t,
+                }
             }
             _ => {
                 if let Some(f) = &args.trust_file {
@@ -574,8 +591,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         None => None,
     };
+    let gateway_probe = gateway.clone();
     let (link, port, urls) = spawn_p2p(db, sec, args.p2p_port, args.connect.clone(), gateway)?;
     hub.set_link_control(link);
+    // what `GET /couchbase` says about how this node replicates, and (with a gateway) what the gateway says, polled
+    hub.set_replication(serde_json::json!({
+        "mode": match (gateway_probe.is_some(), !args.connect.is_empty()) {
+            (true, true) => "Sync Gateway and peer to peer",
+            (true, false) => "Sync Gateway",
+            (false, true) => "peer to peer",
+            (false, false) => "peer to peer (listening)",
+        },
+        "peers": args.connect, "gateway": gateway_probe.as_ref().map(|g| g.0.clone()), "listening": urls,
+    }));
+    if let Some((url, user, password)) = gateway_probe {
+        anp_cblite::couchbase::follow_gateway(hub.clone(), url, user, password, args.sync_count_prefixes.clone());
+    }
     let mut peer_docs: Vec<serde_json::Value> = Vec::new();
     for f in &args.allow_callers {
         let text = std::fs::read_to_string(f).map_err(|e| format!("{}: {e}", f.display()))?;
@@ -651,12 +682,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let budget = anp_authz::parse_amount_minor(args.budget.as_deref().ok_or("--spend-token needs a total: --budget EUROS")?)?;
         let site = args.site.clone().unwrap_or_else(|| args.id.clone());
         hub.set_quote_buyer(anp_cblite::quotes::QuoteBuyer::new(t, dm, &token, root, budget, &site, &args.data)?);
+        if !args.token_from.is_empty() {
+            hub.quote_buyer().ok_or("the buying desk did not start")?.follow_tokens(hub.docs.clone(), args.token_from.clone());
+        }
     }
     if let Some(speed) = args.store_sim {
         if trust.is_none() {
             return Err("--store-sim publishes a signed temperature log: run in a secure mode (--secure, --root-key or --did-host)".into());
         }
-        hub.set_store_sim(&args.id, speed);
+        hub.set_store_sim(&args.id, speed, args.site.as_deref());
     }
     if let Some(url) = &args.group_member {
         let t = trust.clone().ok_or("--group-member needs DID mode (--did-host)")?;

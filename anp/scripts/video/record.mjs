@@ -79,6 +79,13 @@ while (Date.now() - t0 < maxSecs * 1000) {
   await sleep(500);
 }
 await sleep(3000);
+// optionally a second scene in the same recording: another page, with a caption laid over it (the head office's fleet view)
+if (arg("--then")) {
+  await load(arg("--then"));
+  const cap = JSON.stringify(arg("--then-caption", ""));
+  await send("Runtime.evaluate", { expression: `(() => { const b = document.createElement("div"); b.style.cssText = "padding:14px 48px 16px;background:#1a1816;color:#f5f4f2;font:22px/1.45 'Segoe UI',system-ui,sans-serif;text-align:center;border-bottom:3px solid #ea2328"; b.textContent = ${cap}; if (b.textContent) document.body.prepend(b); })()` });
+  await sleep(Number(arg("--then-secs", "20")) * 1000);
+}
 await send("Page.stopScreencast");
 console.log(`scenario ${done ? "finished" : "TIMED OUT"} after ${Math.round((Date.now() - t0) / 1000)} s, ${n} frames`);
 handlers.delete("Page.screencastFrame");

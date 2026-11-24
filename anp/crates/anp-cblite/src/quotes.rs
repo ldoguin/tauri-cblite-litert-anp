@@ -252,7 +252,7 @@ impl QuoteBuyer {
     pub fn state(&self) -> Value {
         let l = self.ledger.lock().unwrap();
         json!({
-            "site": self.site,
+            "site": self.site, "tokenRevoked": self.token_revoked().is_some(),
             "ledger": { "currency": l.currency, "budgetMinor": l.budget(), "outstandingMinor": l.outstanding(), "committedMinor": l.committed(), "remainingMinor": l.remaining(), "entries": l.to_json()["entries"] },
             "requests": *self.requests.lock().unwrap(), "quotes": *self.quotes.lock().unwrap(),
             "acceptances": *self.acceptances.lock().unwrap(), "refusals": *self.refusals.lock().unwrap(),
@@ -285,6 +285,9 @@ impl QuoteBuyer {
         let id = short_id("acc");
         let amount = q["amountMinor"].as_u64().unwrap_or(0);
         // the token first: past its cap only the authority can help (a new token), whereas a person can raise the budget
+        if let Some(id) = self.token_revoked() {
+            return Err(QuoteError::Unauthorized(format!("the spending token is revoked ({id}): only the authority can issue a new one")));
+        }
         let acc = {
             let a = self.authority.lock().unwrap();
             let auth = anp_quote::Authority { node: self.trust.node_id(), token: &a.token, root: &a.root };
@@ -304,6 +307,72 @@ impl QuoteBuyer {
         self.acceptances.lock().unwrap().insert(id.clone(), json!({ "to": seller_did, "quoteId": quote_id, "acceptance": acc, "status": "pending", "amountMinor": amount }));
         self.save();
         Ok(id)
+    }
+
+    /// The revocation id (hex) that makes the current spending token unusable, when the authority has revoked it (a revocation this node
+    /// holds: see [`Trust::with_authority`]).
+    pub fn token_revoked(&self) -> Option<String> {
+        let a = self.authority.lock().unwrap();
+        let ids = anp_authz::token_revocation_ids(&a.token, &a.root).ok()?;
+        self.trust.revoked_among(&ids)
+    }
+
+    /// The spending token in use now.
+    pub fn current_token(&self) -> String {
+        self.authority.lock().unwrap().token.clone()
+    }
+
+    /// Take a new spending token the authority issued to this node (it reached the store as a document): used when it verifies against the
+    /// authority's key, is not revoked, and is bound to this node and its DID (it is tried on a one-cent commitment, as a seller would).
+    /// Returns whether it replaced the token in use.
+    pub fn install_token(&self, token: &str) -> Result<bool, String> {
+        let token = token.trim();
+        if token == self.current_token() {
+            return Ok(false);
+        }
+        let (root, did) = (self.authority.lock().unwrap().root, self.me());
+        let ids = anp_authz::token_revocation_ids(token, &root).map_err(|e| format!("not a token of this authority: {e}"))?;
+        if let Some(id) = self.trust.revoked_among(&ids) {
+            return Err(format!("the token is revoked ({id})"));
+        }
+        let key = self.trust.public_key();
+        let probe = anp_authz::Commitment { node: self.trust.node_id(), key_b64: &key, amount_minor: 1, currency: "EUR", category: "transport", on_behalf_of: &self.site };
+        anp_authz::authorize_commitment(token, &root, &probe, Some(&did)).map_err(|e| format!("the token is not for this node: {e}"))?;
+        self.authority.lock().unwrap().token = token.to_string();
+        self.save();
+        Ok(true)
+    }
+
+    /// Take new spending tokens from the replicated `tokens`: a document for this node, carried by one of `carriers` (the nodes it was told to
+    /// accept tokens from), whose token [`QuoteBuyer::install_token`] accepts. Each token is tried once. The token itself is what counts: a
+    /// carrier can only pass on what the authority signed for this node, and one the authority has revoked is refused.
+    pub fn follow_tokens(self: &Arc<Self>, docs: crate::docs::Docs, carriers: Vec<String>) {
+        let me = self.clone();
+        tokio::spawn(async move {
+            let mut tried: std::collections::HashSet<String> = std::collections::HashSet::new();
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                let Ok(list) = docs.list(crate::docs::Coll::Tokens).await else { continue };
+                for (id, d) in list {
+                    let (by, token) = (d["trust"]["author"].as_str().unwrap_or(""), d["token"].as_str().unwrap_or(""));
+                    // each (carrier, token) once: a token a stranger carried is still welcome later from a carrier the store was told to use
+                    let seen = format!("{by}|{token}");
+                    if d["store"] != json!(me.trust.node_id()) || token.is_empty() || tried.contains(&seen) {
+                        continue;
+                    }
+                    tried.insert(seen);
+                    if !carriers.iter().any(|c| c == by) {
+                        log::warn!("quote buyer: a token in {id} from {by} is ignored: {by} is not a node to accept tokens from");
+                        continue;
+                    }
+                    match me.install_token(token) {
+                        Ok(true) => log::info!("quote buyer: a new spending token from {by} ({id}) is in use"),
+                        Ok(false) => {}
+                        Err(e) => log::warn!("quote buyer: the token in {id} from {by} was refused: {e}"),
+                    }
+                }
+            }
+        });
     }
 
     /// The duty manager's approval: a new token from the authority (a higher cap), a new budget, or both.

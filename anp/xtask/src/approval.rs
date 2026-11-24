@@ -21,9 +21,9 @@ fn decide(port: u16, body: Value) -> (u16, Value) {
 
 /// Remove every document named `store::...` from the gateway and Server, whatever collection it is in: with no tombstone left, a later run's
 /// documents of the same names are new documents, not conflicts with the last run's.
-fn purge_store_docs() {
-    for coll in ["telemetry", "rescue", "approvals"] {
-        let ids = query(&format!("SELECT RAW META().id FROM `fleet`.`a2a`.`{coll}` WHERE META().id LIKE 'store::%'")).unwrap_or_default();
+pub(crate) fn purge_store_docs() {
+    for coll in ["telemetry", "rescue", "approvals", "tokens"] {
+        let ids = query(&format!("SELECT RAW META().id FROM `fleet`.`a2a`.`{coll}` WHERE META().id LIKE 'store%::%'")).unwrap_or_default();
         if ids.is_empty() {
             continue;
         }

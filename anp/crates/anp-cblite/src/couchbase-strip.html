@@ -1,0 +1,47 @@
+<style>
+  /* the Couchbase pieces of this node, live: its Couchbase Lite database, how it replicates, and (with one) Sync Gateway and Couchbase Server */
+  #cb { flex: none; display: flex; align-items: stretch; gap: .5em; padding: .55em 1.4em; border-bottom: 1px solid var(--line); background: #14110f; font-size: var(--cbfs, .8rem); }
+  #cb .tag { align-self: center; color: var(--red); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; font-size: .75em; flex: none; white-space: nowrap; margin-right: .4em; line-height: 1.25; }
+  #cb .pc { background: var(--panel2); border: 1px solid var(--line); border-radius: .5em; padding: .35em .8em; min-width: 0; flex: 1 1 0; transition: border-color .3s, box-shadow .3s; }
+  #cb .pc b { display: block; font-size: 1.05em; color: var(--fg); white-space: nowrap; }
+  #cb .pc em { display: block; font-style: normal; color: var(--fg); font-size: .95em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #cb .pc span { display: block; color: var(--mut); font-size: .82em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #cb .pc.move { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
+  #cb .pc.off { border-color: var(--amber); }
+  #cb .ar { align-self: center; flex: none; text-align: center; color: var(--red); font-size: .85em; font-weight: 600; min-width: 7em; line-height: 1.25; }
+  #cb .ar i { display: block; font-style: normal; font-weight: 400; color: var(--mut); font-size: .88em; }
+  #cb .ar.cut { color: var(--amber); }
+</style>
+<div id="cb"><div class="tag">Couchbase</div><div class="pc"><b>Couchbase Lite</b><span>starting…</span></div></div>
+<script>
+(() => {
+  const el = document.getElementById('cb');
+  const last = {};
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const piece = (title, head, line, small, moved, off) => `<div class="pc${moved ? ' move' : ''}${off ? ' off' : ''}"><b>${esc(title)}</b><em>${esc(head)}</em><span>${esc(line)}${small ? ' · ' + esc(small) : ''}</span></div>`;
+  const arrow = (mode, up) => `<div class="ar${up === false ? ' cut' : ''}">${esc(mode || 'replication')} ⇄<i>${up === false ? 'link cut' : up === true ? 'live' : ''}</i></div>`;
+  function render(v) {
+    const db = v.database, g = v.gateway, r = v.replication || {};
+    const cols = Object.entries(db.collections).filter(([, n]) => n > 0).map(([k, n]) => `${k} ${n}`).join(' · ');
+    const dbMoved = last.db !== undefined && db.total !== last.db; last.db = db.total;
+    let h = `<div class="tag">Couchbase</div>` + piece('Couchbase Lite', `${v.node}'s database`, `${db.total} signed documents`, cols, dbMoved);
+    if (g && g.url) {
+      h += arrow(r.mode, v.linkUp);
+      const gMoved = last.seq !== undefined && g.updateSeq !== last.seq; last.seq = g.updateSeq;
+      h += piece('Sync Gateway', g.online ? 'online' : 'not answering', g.online ? `database ${g.database}, sequence ${g.updateSeq}` : (g.error || ''), g.user ? `as ${g.user}` : '', gMoved, !g.online);
+      h += `<div class="ar">stored in ⇄<i>channels</i></div>`;
+      const sMoved = last.srv !== undefined && g.total !== last.srv; last.srv = g.total;
+      h += piece('Couchbase Server', 'bucket fleet · scope a2a', `${g.total ?? 0} documents`, 'this node may read', sMoved, !g.online);
+    } else {
+      const peers = (r.peers || []).length;
+      h += arrow(r.mode || 'peer to peer', v.linkUp);
+      h += piece('Other Couchbase Lite databases', peers ? `${peers} dialled: stores' databases` : 'waiting for peers to dial in', 'replicated directly, no server', '', false);
+    }
+    el.innerHTML = h;
+  }
+  async function tick() {
+    try { render(await (await fetch('/couchbase', { cache: 'no-store' })).json()); } catch (e) { /* the node is restarting */ }
+  }
+  tick(); setInterval(tick, 1500);
+})();
+</script>

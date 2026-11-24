@@ -69,7 +69,10 @@
   #deals { overflow: auto; }
   .empty { color: var(--dim); font-size: 13px; }
   footer { flex: none; }
-  #caption { margin: 0; padding: 16px 40px; background: rgba(15,14,13,.97); border-top: 3px solid var(--red); font-size: 24px; text-align: center; min-height: 68px; }
+  /* the story is told at the top: the caption, then (in a recording) what the protocol and Couchbase are doing under it */
+  #caption { flex: none; margin: 0; padding: 12px 40px; background: rgba(15,14,13,.97); border-bottom: 3px solid var(--red); font-size: 24px; text-align: center; min-height: 62px; }
+  #explain { flex: none; padding: 0 40px; color: #d6d3d1; font-size: 18px; line-height: 1.4; text-align: center; background: #14110f; transition: opacity .35s; }
+  :root { --cbfs: 14px; }
   #controls { display: flex; gap: 8px; padding: 8px 22px; background: var(--panel); border-top: 1px solid var(--line); flex-wrap: wrap; }
   button { background: var(--panel2); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; }
   button:hover { border-color: var(--mut); }
@@ -84,6 +87,9 @@
   <span id="phase" class="pill">idle</span>
   <div class="clock" id="clock">--:--</div>
 </header>
+<p id="caption"></p>
+<div id="explain"></div>
+<!--COUCHBASE-->
 <main>
   <div class="col">
     <section><h2>Cold room · signed temperature log</h2><div class="units" id="units"></div></section>
@@ -107,7 +113,6 @@
   </div>
 </main>
 <footer>
-  <p id="caption"></p>
   <div id="controls">
     <button onclick="act('/store/sim/fault',{unit:'frz-1',fault:'defrost-stuck'}).then(()=>act('/store/sim/fault',{unit:'chl-1',fault:'compressor-off'}))">Freezer 1 + dairy fail</button>
     <button onclick="act('/store/sim/advance',{minutes:10})">+10 min</button>

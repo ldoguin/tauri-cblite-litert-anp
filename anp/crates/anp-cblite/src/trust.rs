@@ -261,9 +261,17 @@ pub enum Opened {
     Refused(String),
 }
 
+/// A node that is not in Biscuit mode but knows the authority that issues the fleet's spending tokens: it accepts that authority's signed
+/// revocations (as documents or over HTTP) and keeps the deny-list of revoked tokens.
+struct AuthorityMode {
+    root: anp_authz::PublicKey,
+    revoked: Mutex<HashSet<String>>,
+}
+
 pub struct Trust {
     node_id: String,
     biscuit: Option<BiscuitMode>,
+    authority: Option<AuthorityMode>,
     did: Option<DidMode>,
     e2ee: Option<E2eeState>,
     key: SigningKey,
@@ -285,6 +293,7 @@ impl Trust {
         Trust {
             node_id: node_id.into(),
             biscuit: None,
+            authority: None,
             did: None,
             e2ee: None,
             key,
@@ -348,6 +357,26 @@ impl Trust {
             cache: Mutex::new(HashMap::new()),
         });
         Ok(self)
+    }
+
+    /// Know the authority (`root_pub_b64`) that issues the spending tokens, without joining a Biscuit mesh: its signed revocations are
+    /// accepted from here on, whether they arrive as documents or over HTTP, and [`Trust::revoked_among`] answers for any token of it.
+    /// (In Biscuit mode the mesh's own authority does the same job.)
+    pub fn with_authority(mut self, root_pub_b64: &str) -> Result<Trust, String> {
+        self.authority = Some(AuthorityMode { root: anp_authz::parse_public_key(root_pub_b64)?, revoked: Mutex::new(HashSet::new()) });
+        Ok(self)
+    }
+
+    /// Is one of these revocation ids (hex) revoked? Returns it.
+    pub fn revoked_among(&self, ids: &[String]) -> Option<String> {
+        let sets = [self.biscuit.as_ref().map(|b| &b.revoked), self.authority.as_ref().map(|a| &a.revoked)];
+        for s in sets.into_iter().flatten() {
+            let s = s.lock().unwrap();
+            if let Some(id) = ids.iter().find(|i| s.contains(&i.to_lowercase())) {
+                return Some(id.clone());
+            }
+        }
+        None
     }
 
     /// `"did+biscuit"`, `"did"`, `"biscuit"` or `"allowlist"`.
@@ -431,6 +460,11 @@ impl Trust {
     /// Is the authority's token (Biscuit) in use, alone or together with DIDs?
     pub fn has_biscuit(&self) -> bool {
         self.biscuit.is_some()
+    }
+
+    /// Does this node honour an authority's revocations (Biscuit mode, or [`Trust::with_authority`])?
+    pub fn honours_revocations(&self) -> bool {
+        self.biscuit.is_some() || self.authority.is_some()
     }
 
     /// Does this mode check who connects (a token, or a DID assertion)?
@@ -991,29 +1025,38 @@ impl Trust {
 
     /// Check a revocation document and, if it is genuine, start refusing the token it names.
     fn verify_revocation_doc(&self, id: &str, body: &Value) -> Result<(), Reject> {
-        let Some(b) = &self.biscuit else {
-            return Err(Reject::NotAuthorized("revocations need Biscuit mode".into()));
+        let Some((root, revoked)) = self.revocation_authority() else {
+            return Err(Reject::NotAuthorized("revocations need Biscuit mode or the authority's key (--authority-root)".into()));
         };
         let rev = Revocation::from_json(body).map_err(Reject::BadCredential)?;
         if !rev.revoked.eq_ignore_ascii_case(id) {
             return Err(Reject::NotAuthorized("revocation id does not match its document id".into()));
         }
-        anp_authz::verify_revocation(&rev, &b.root).map_err(Reject::BadCredential)?;
-        b.revoked.lock().unwrap().insert(rev.revoked.to_lowercase());
+        anp_authz::verify_revocation(&rev, root).map_err(Reject::BadCredential)?;
+        revoked.lock().unwrap().insert(rev.revoked.to_lowercase());
         Ok(())
+    }
+
+    /// The authority whose revocations this node accepts, and its deny-list: the mesh's (Biscuit mode) or the fleet's (`with_authority`).
+    fn revocation_authority(&self) -> Option<(&anp_authz::PublicKey, &Mutex<HashSet<String>>)> {
+        match (&self.biscuit, &self.authority) {
+            (Some(b), _) => Some((&b.root, &b.revoked)),
+            (None, Some(a)) => Some((&a.root, &a.revoked)),
+            _ => None,
+        }
     }
 
     /// Verify a revocation received out of band (the HTTP endpoint) and apply it.
     pub fn accept_revocation(&self, rev: &Revocation) -> Result<(), String> {
-        let b = self.biscuit.as_ref().ok_or("revocations need Biscuit mode")?;
-        anp_authz::verify_revocation(rev, &b.root)?;
-        b.revoked.lock().unwrap().insert(rev.revoked.to_lowercase());
+        let (root, revoked) = self.revocation_authority().ok_or("revocations need Biscuit mode or the authority's key (--authority-root)")?;
+        anp_authz::verify_revocation(rev, root)?;
+        revoked.lock().unwrap().insert(rev.revoked.to_lowercase());
         Ok(())
     }
 
     /// Hex ids of the tokens this node refuses.
     pub fn revoked_ids(&self) -> Vec<String> {
-        let mut v: Vec<String> = self.biscuit.as_ref().map(|b| b.revoked.lock().unwrap().iter().cloned().collect()).unwrap_or_default();
+        let mut v: Vec<String> = self.revocation_authority().map(|(_, r)| r.lock().unwrap().iter().cloned().collect()).unwrap_or_default();
         v.sort();
         v
     }
@@ -1209,6 +1252,12 @@ fn authorize(coll: Coll, id: &str, content: &Value, author: &str) -> Result<(), 
         Coll::Approvals => ok(
             field("by") == Some(author) && matches!((field("store"), field("run")), (Some(s), Some(r)) if id == format!("{s}::{r}::{author}")),
             format!("'{author}' may only sign an approval of its own, named <store>::<run>::<signer> (not '{id}')"),
+        ),
+        // a token for a store: carried by the node that signs it (`by`), one document per carrier, named for the store and the carrier. The token
+        // itself is checked where it is used: it is the authority's, bound to the store's key and DID.
+        Coll::Tokens => ok(
+            field("by") == Some(author) && matches!(field("store"), Some(s) if id == format!("{s}::{author}")),
+            format!("'{author}' may only carry a token in a document named <store>::<carrier> (not '{id}')"),
         ),
         Coll::Inbox => ok(
             field("from") == Some(author),
@@ -1660,6 +1709,41 @@ mod tests {
         // allowlist mode has no authority, so it never honours revocation documents
         let plain = node("carol", 3);
         assert!(matches!(plain.verify(Coll::Revocations, &real.revoked, &real.to_json()), Err(Reject::NotAuthorized(_))));
+    }
+
+    #[test]
+    fn a_node_that_knows_the_authority_honours_its_revocations_without_biscuit_mode() {
+        let auth = Authority::generate();
+        let impostor = Authority::generate();
+        let alice = token_node(&auth, "alice", 1, &["*"]);
+        let mut cmd = command("alice", "bob");
+        alice.sign(Coll::Inbox, "send::t1", &mut cmd);
+        let token = cmd["trust"]["token"].as_str().unwrap().to_string();
+        let ids = anp_authz::token_revocation_ids(&token, &auth.public_key()).unwrap();
+        assert!(!ids.is_empty());
+        assert!(anp_authz::token_revocation_ids(&token, &impostor.public_key()).is_err(), "not a token of another authority");
+
+        // a store in DID mode (no Biscuit mesh) that was told which authority issues its spending tokens
+        let store = node("store", 4).with_authority(&auth.public_b64()).unwrap();
+        assert_eq!(store.revoked_among(&ids), None);
+        let real = auth.revoke(&token, "store lost").unwrap();
+        let forged = impostor.revoke_id(&ids[0], "mallory says so").unwrap();
+        assert!(matches!(store.verify(Coll::Revocations, &ids[0], &forged.to_json()), Err(Reject::BadCredential(_))), "not signed by the authority");
+        assert_eq!(store.revoked_among(&ids), None, "nothing applied");
+        assert_eq!(store.verify(Coll::Revocations, &real.revoked, &real.to_json()), Ok("authority".into()));
+        assert_eq!(store.revoked_among(&ids), Some(ids[0].clone()));
+        assert_eq!(store.revoked_ids(), vec![real.revoked.clone()]);
+        // and a node that was not told still refuses to take revocation documents
+        assert!(matches!(node("other", 5).verify(Coll::Revocations, &real.revoked, &real.to_json()), Err(Reject::NotAuthorized(_))));
+    }
+
+    #[test]
+    fn a_token_is_carried_in_a_document_named_for_the_store_and_the_carrier() {
+        let token = |by: &str, store: &str| json!({ "kind": "token", "store": store, "token": "x", "by": by });
+        assert!(authorize(Coll::Tokens, "store::office", &token("office", "store"), "office").is_ok());
+        assert!(authorize(Coll::Tokens, "store::office", &token("office", "store"), "hq").is_err(), "signed by someone else than `by`");
+        assert!(authorize(Coll::Tokens, "store::hq", &token("office", "store"), "office").is_err(), "the id names another carrier");
+        assert!(authorize(Coll::Tokens, "other::office", &token("office", "store"), "office").is_err(), "the id names another store");
     }
 
     #[test]

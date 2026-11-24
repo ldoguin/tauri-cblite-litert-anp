@@ -7,7 +7,9 @@
 //  * an approval (`kind: "approval"`) is written by a duty manager's node, not the store's, into the store's channel: the writer must have
 //    been given that channel, so a phone cannot approve for a store it was not given. The store checks who signed, and whether that signer is
 //    one of its duty managers, where it acts on the approval;
-//  * documents no node authored (the authority's revocations and tokens) are written by head office into `fleet`, read by every store.
+//  * a new spending token (`kind: "token"`) is carried into the store's channel the same way, by a node that was given that channel; the token
+//    is the authority's, checked where it is used, and the store takes tokens only from the carriers it was told to;
+//  * documents no node authored (the authority's revocations) are written by head office (the role `head-office`) into `fleet`, read by every store.
 // Signatures are still checked by the nodes that read the documents: this function only routes and keeps stores apart.
 function (doc, oldDoc, meta) {
   var src = doc._deleted ? oldDoc : doc;
@@ -18,7 +20,7 @@ function (doc, oldDoc, meta) {
   if (author && oldDoc && oldDoc.trust && oldDoc.trust.author !== author) {
     throw({ forbidden: "a document keeps its author" });
   }
-  if (author && src.kind === "approval" && src.store) {
+  if (author && (src.kind === "approval" || src.kind === "token") && src.store) {
     requireUser(author);
     requireAccess("store." + src.store);
     channel("store." + src.store);

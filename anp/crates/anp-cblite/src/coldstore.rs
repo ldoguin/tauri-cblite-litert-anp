@@ -55,6 +55,10 @@ impl ColdStoreSim {
     pub fn docs(&self) -> &Docs {
         &self.docs
     }
+    /// The name of the site the cold room belongs to (before the first publish).
+    pub fn set_site(&self, site: &str) {
+        self.store.lock().unwrap().site = site.to_string();
+    }
 
     /// Publish the first readings, then let the clock run (if it runs on its own).
     pub fn start(self: &Arc<Self>) {

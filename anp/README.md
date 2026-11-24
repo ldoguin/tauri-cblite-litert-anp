@@ -472,12 +472,21 @@ cargo build -p anp-node -p anp-authz -p anp-search
 cargo xtask cold-rescue                       # then open http://127.0.0.1:19102/demo/rescue; Enter stops the ten nodes
                                               # http://127.0.0.1:19102/demo/rescue?autoplay=1 plays the night with captions
 cargo xtask cold-rescue --record night.mp4    # films the autoplay with explainers and intro/outro cards (Node 22+, Chrome or Edge, ffmpeg)
+cargo xtask cold-rescue --fleet               # the same, with two more stores and a head office: http://127.0.0.1:19112/demo/fleet
+cargo xtask cold-rescue --fleet --record fleet.mp4   # the night, then the head office's view (24 s) before the outro
+cargo xtask cold-rescue --gateway             # needs fleet-up: the stores and the head office replicate through Sync Gateway into Couchbase Server
 cargo xtask e2e-rescue                        # the same night, and a head office replicating the store's records: 44 checks
 cargo xtask e2e-discovery                     # the same night, with the companies found through a search agent: 39 checks
 ```
 
 The demo runs the realistic night: the eight companies register with a search agent, and the store's agent finds them there and resolves
 their DIDs over HTTPS (each node behind a TLS front with a CA made for the run). `e2e-rescue` keeps the directory mode.
+
+Both pages carry a **Couchbase strip** under the header, from `GET /couchbase` (this machine's operator only): the node's Couchbase Lite
+database (signed documents, and how many per collection), how it replicates (peer to peer, or with a Sync Gateway) and whether the link is live
+or cut, and, with `--sync-gateway`, the gateway (online, its update sequence) and the documents Couchbase Server holds that this node's user may
+read (`--sync-count-prefix` limits that count to ids starting with a prefix, so a demo does not count what earlier runs left). A box outlines in
+red when its number changes. In a recording, the caption and the line explaining it are at the top of the page.
 
 The control room shows the store's cold room and its signed temperature log, the stock under its food-safety rules, the agent's log with
 the rule behind each decision, the duty manager's decision card, every company's quote and confirmation with the ledger, and the encrypted
@@ -487,7 +496,7 @@ and real use start it with no pace. The recording tools (`scripts/video/record.m
 the rescue uses `rescue-intro.html`, `rescue-outro.html` and `rescue-explainers.js`. Like the rest of the project, the store and the companies
 are fictional and the agent plans by rules; the protocol, signatures and encryption are real.
 
-### The fleet: records, Couchbase Server and Sync Gateway (in progress)
+### The fleet: records, Couchbase Server and Sync Gateway
 
 **Records (F1).** The store's agent writes each run as one signed document in the replicated `rescue` collection, `<node>::<run>`: the
 phase, the log with the rule behind each decision, the plan, the approval, the confirmed deals and the ledger. It is written again at every
@@ -552,6 +561,23 @@ signer is in the document's id, so one node's approval can never replace another
 ```text
 cargo xtask e2e-approval  # needs fleet-up: the whole night with a phone as duty manager, a forged approval and one for another store; 21 checks
 ```
+
+**Revocations and new tokens (F6).** The retailer's authority signs the stores' spending tokens, and can revoke one (`anp-admin revoke`) and
+issue a new one. Neither reaches a store from the authority directly: the head office takes the authority's signed revocation
+(`POST /security/revocations`, verified against the authority's key, `--authority-root` or a buyer's `--spend-root`) and writes it into the
+replicated `revocations`; it carries a new token with `POST /fleet/token {store, token}`, a document `<store>::<carrier>` in the new `tokens`
+collection. A store that reads a revocation of its token refuses to sign with it (`tokenRevoked` in `/anp/quotes`); it takes a new token only
+from a carrier it was told to use (`--token-from NODE`), only if the token is the authority's, for this store's key and DID, and not revoked,
+so a revoked token carried again is refused. In Sync Gateway the head office has the role `head-office` (it alone may write documents no node
+signed) and is named for each store's channel it carries tokens into: `*` lets it read every channel but does not satisfy the gateway's access
+check for a write.
+
+```text
+cargo xtask e2e-revocation  # needs fleet-up: a token works, is revoked, a new one is carried in, an old one is refused; a forger is ignored; 19 checks
+```
+
+What this does not do: a company outside the retailer still accepts a revoked token if a store were to use it (a store does not), because
+companies do not read the retailer's gateway. Telling them would be an ANP message from the authority, not a replicated document.
 
 Both checks start the nodes on this machine next to the k3d cluster. `e2e-approval` runs eleven nodes and a phone, so a busy machine can make a
 company slow: with 40 s as the agent's wait for an answer, a confirmation that came late was counted as no answer (the ledger committed it

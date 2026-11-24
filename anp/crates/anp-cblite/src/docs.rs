@@ -45,10 +45,13 @@ pub enum Coll {
     Rescue,
     /// A duty manager's decision on a store's rescue plan, `<store>::<run>::<signer>`; written by the duty manager's node (a phone), not the store's.
     Approvals,
+    /// A new spending token for a store, `<store>::<carrier>`: the token is the authority's (signed by it, bound to the store's key and DID);
+    /// the document is written by whoever carries it, and the store takes it from a node it was told to accept tokens from.
+    Tokens,
 }
 
 impl Coll {
-    pub const ALL: [Coll; 7] = [Coll::Inbox, Coll::Tasks, Coll::Agents, Coll::Revocations, Coll::Telemetry, Coll::Rescue, Coll::Approvals];
+    pub const ALL: [Coll; 8] = [Coll::Inbox, Coll::Tasks, Coll::Agents, Coll::Revocations, Coll::Telemetry, Coll::Rescue, Coll::Approvals, Coll::Tokens];
     pub fn name(self) -> &'static str {
         match self {
             Coll::Inbox => "inbox",
@@ -58,6 +61,7 @@ impl Coll {
             Coll::Telemetry => "telemetry",
             Coll::Rescue => "rescue",
             Coll::Approvals => "approvals",
+            Coll::Tokens => "tokens",
         }
     }
     /// `scope.collection`, the spelling `tauri-plugin-cblite` uses.
@@ -295,7 +299,7 @@ fn actor(
     }
     let _ = ready.send(Ok(()));
 
-    if trust.as_ref().map_or(false, |t| t.has_biscuit()) {
+    if trust.as_ref().map_or(false, |t| t.honours_revocations()) {
         // Apply the revocations already stored, then watch for new ones, so a revocation that
         // arrived while nobody was reading still takes effect.
         let sql = format!("SELECT META().id AS id FROM {}.{}", SCOPE, Coll::Revocations.name());

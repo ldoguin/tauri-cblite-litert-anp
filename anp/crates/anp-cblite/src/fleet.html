@@ -5,45 +5,47 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Fleet</title>
 <style>
+  /* sizes are in rem, and the root size follows the window: 16px at 1280 wide, 24px at 1920 (a recording), 14px on a phone */
+  html { font-size: clamp(14px, 1.25vw, 30px); }
   :root {
     --bg: #0f0e0d; --panel: #1a1816; --panel2: #221f1c; --line: #34302b; --fg: #f5f4f2; --mut: #a8a29e; --dim: #77716b;
     --red: #ea2328; --amber: #f5a524; --green: #3fb950; --blue: #58a6ff; --ice: #9fd8ff;
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 "Segoe UI", system-ui, sans-serif; }
-  header { display: flex; align-items: center; flex-wrap: wrap; gap: 18px; padding: 14px 22px; border-bottom: 1px solid var(--line); }
-  header h1 { font-size: 22px; margin: 0; font-weight: 650; }
-  header .tag { color: var(--red); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; font-size: 12px; }
-  .totals { display: flex; gap: 22px; margin-left: auto; flex-wrap: wrap; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); font: 1rem/1.45 "Segoe UI", system-ui, sans-serif; }
+  header { display: flex; align-items: center; flex-wrap: wrap; gap: 1.1rem; padding: .9rem 1.4rem; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 1.4rem; margin: 0; font-weight: 650; }
+  header .tag { color: var(--red); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; font-size: .75rem; }
+  .totals { display: flex; gap: 1.5rem; margin-left: auto; flex-wrap: wrap; }
   .totals div { text-align: right; }
-  .totals b { display: block; font: 600 24px/1.1 Consolas, monospace; }
-  .totals span { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .08em; }
+  .totals b { display: block; font: 600 1.5rem/1.1 Consolas, monospace; }
+  .totals span { font-size: .7rem; color: var(--dim); text-transform: uppercase; letter-spacing: .08em; }
   .totals .bad b { color: var(--red); }
-  main { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; padding: 16px 22px; }
-  .store { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  main { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 24rem), 1fr)); gap: 1rem; padding: 1.1rem 1.4rem; align-items: start; }
+  .store { background: var(--panel); border: 1px solid var(--line); border-radius: .65rem; padding: .8rem .9rem; min-width: 0; }
   .store.bad { border-color: var(--red); }
   .store.wait { border-color: var(--amber); box-shadow: 0 0 0 1px var(--amber); }
-  .top { display: flex; align-items: baseline; gap: 10px; }
-  .top .name { font-weight: 650; font-size: 16px; }
-  .top .site { color: var(--dim); font-size: 12px; }
-  .top .clock { margin-left: auto; font: 600 16px/1 Consolas, monospace; color: var(--ice); }
-  .units { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0; }
-  .unit { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; }
-  .unit .n { font-size: 11px; color: var(--mut); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .unit .t { font: 600 20px/1.2 Consolas, monospace; }
-  .unit .f { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; min-height: 13px; color: var(--dim); }
+  .top { display: flex; align-items: baseline; gap: .6rem; }
+  .top .name { font-weight: 650; font-size: 1.05rem; }
+  .top .site { color: var(--dim); font-size: .75rem; }
+  .top .clock { margin-left: auto; font: 600 1rem/1 Consolas, monospace; color: var(--ice); }
+  .units { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; margin: .65rem 0; }
+  .unit { background: var(--panel2); border: 1px solid var(--line); border-radius: .5rem; padding: .4rem .6rem; min-width: 0; }
+  .unit .n { font-size: .7rem; color: var(--mut); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .unit .t { font: 600 1.3rem/1.2 Consolas, monospace; }
+  .unit .f { font-size: .62rem; text-transform: uppercase; letter-spacing: .06em; min-height: .85rem; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .unit.fault { border-color: var(--red); } .unit.fault .t, .unit.fault .f { color: var(--red); }
   .unit.warming { border-color: var(--amber); } .unit.warming .t, .unit.warming .f { color: var(--amber); }
-  .unit svg { width: 100%; height: 22px; display: block; }
-  .agent { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--mut); border-top: 1px solid var(--line); padding-top: 9px; }
-  .phase { padding: 2px 10px; border-radius: 999px; background: var(--panel2); border: 1px solid var(--line); font-size: 12px; color: var(--mut); }
+  .unit svg { width: 100%; height: 1.4rem; display: block; }
+  .agent { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem; font-size: .85rem; color: var(--mut); border-top: 1px solid var(--line); padding-top: .6rem; }
+  .phase { padding: .1rem .65rem; border-radius: 999px; background: var(--panel2); border: 1px solid var(--line); font-size: .78rem; color: var(--mut); }
   .phase.live { color: var(--fg); border-color: var(--amber); }
   .phase.wait { color: #000; background: var(--amber); border-color: var(--amber); }
   .phase.done { color: #000; background: var(--green); border-color: var(--green); }
   .phase.failed, .phase.declined { color: #fff; background: var(--red); border-color: var(--red); }
   .agent .spend { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--fg); }
-  .empty { color: var(--dim); padding: 40px 22px; }
-  footer { color: var(--dim); font-size: 12px; padding: 0 22px 18px; }
+  .empty { color: var(--dim); padding: 2.5rem 1.4rem; }
+  footer { color: var(--dim); font-size: .75rem; padding: 0 1.4rem 1.1rem; }
 </style>
 </head>
 <body>
@@ -52,6 +54,7 @@
   <h1>Fleet</h1>
   <div class="totals" id="totals"></div>
 </header>
+<!--COUCHBASE-->
 <main id="stores"><div class="empty">Waiting for the first store to report.</div></main>
 <footer id="foot">Every number here comes from signed documents this node holds and has verified, replicated from the stores.</footer>
 <script>
@@ -63,7 +66,7 @@ function spark(v, color) {
   if (!v || v.length < 2) return '';
   const lo = Math.min(...v), hi = Math.max(...v), r = (hi - lo) || 1;
   const pts = v.map((y, i) => (i * 100 / (v.length - 1)).toFixed(1) + ',' + (20 - (y - lo) / r * 18).toFixed(1)).join(' ');
-  return `<svg viewBox="0 0 100 22" preserveAspectRatio="none"><polyline fill="none" stroke="${color}" stroke-width="1.5" points="${pts}"/></svg>`;
+  return `<svg viewBox="0 0 100 22" preserveAspectRatio="none"><polyline fill="none" stroke="${color}" stroke-width="1.5" vector-effect="non-scaling-stroke" points="${pts}"/></svg>`;
 }
 function unit(u) {
   const color = u.state === 'fault' ? '#ea2328' : u.state === 'warming' ? '#f5a524' : '#9fd8ff';
