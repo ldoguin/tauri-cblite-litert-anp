@@ -1,0 +1,14 @@
+<section id="closing" class="dark" style="padding-bottom:200px">
+<p class="eyebrow">What made it possible</p>
+<h2 style="font-size:64px; line-height:1.08; margin:0 0 40px; max-width:1500px">The Agent Reasoned Freely, But Could Only Sign What Its Token Allowed</h2>
+<ul style="font-size:32px; line-height:1.4; margin:0; max-width:1500px">
+<li><b>Found and verified strangers.</b> DIDs on each company’s own domain, signed messages, no shared platform.</li>
+<li><b>Spent within limits the other side enforced.</b> A Biscuit token bound to the store’s DID.</li>
+<li><b>Kept a record no one can rewrite.</b> Six deals, each four signed messages that audit offline.</li>
+<li><b>Seen from head office.</b> Couchbase Lite, Sync Gateway and Couchbase Server carry every store’s records.</li>
+</ul>
+<p class="mono" style="margin-top:auto">cargo xtask cold-rescue --gateway</p>
+<p class="note" style="margin-top:12px; max-width:1500px">A simulation: the store, the companies and their prices are fictional, and the agent plans by rules. The protocol, signatures and encryption are real.</p>
+<img src="project/ds/couchbase-2026/assets/logos/logo-red-white.svg" alt="Couchbase" style="position:absolute; left:128px; bottom:64px; width:187px; height:35px">
+<aside>Close. The agent reasoned freely, but could only sign what its token allowed. To run it: cargo xtask cold-rescue --gateway brings up the night, two more stores and a head office, replicating through Sync Gateway into Couchbase Server (it needs the local k3d fleet from cargo xtask fleet-up); without --gateway, stores replicate straight to the head office.</aside>
+</section>

@@ -1,0 +1,18 @@
+<section id="deals" class="cream">
+<p class="eyebrow">Committing</p>
+<h2 class="title">Six Deals, Each Auditable Offline</h2>
+<div class="row" style="align-items:stretch">
+<div class="card"><p class="step">1</p><h3>Request</h3><p>signed by the store</p></div>
+<x-shape kind="arrow-right" style="width:56px; height:28px; background:#ec1218; flex:none; align-self:center"></x-shape>
+<div class="card"><p class="step">2</p><h3>Quote</h3><p>signed by the company</p></div>
+<x-shape kind="arrow-right" style="width:56px; height:28px; background:#ec1218; flex:none; align-self:center"></x-shape>
+<div class="card"><p class="step">3</p><h3>Acceptance</h3><p>carries the spending token</p></div>
+<x-shape kind="arrow-right" style="width:56px; height:28px; background:#ec1218; flex:none; align-self:center"></x-shape>
+<div class="card"><p class="step">4</p><h3>Confirmation</h3><p>signed by the company</p></div>
+</div>
+<div class="row" style="margin-top:auto">
+<div class="card"><p class="big red" style="font-size:110px">€10,500</p><p class="cap">committed in six deals, every one audited</p></div>
+<div class="card"><h3>An encrypted group</h3><p>The plan is posted for everyone involved, and the group host cannot read it.</p></div>
+</div>
+<aside>Request, quote, acceptance, confirmation: four signed messages per deal, each naming the previous one by digest. Each company checks the acceptance on its own: the token’s issuer, the DID and key that signed it, the amount, the category, the store. Anyone holding the DID documents and the authority’s key can verify a deal offline, after the token has expired. The group is an MLS group on a separate host, which relays ciphertext it cannot read.</aside>
+</section>

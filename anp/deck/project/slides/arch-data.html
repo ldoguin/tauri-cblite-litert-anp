@@ -1,0 +1,11 @@
+<section id="arch-data" class="cream">
+<p class="eyebrow">Data</p>
+<h2 class="title">Couchbase Lite In Every Node</h2>
+<div class="row" style="align-items:stretch">
+<div class="card"><h3>An embedded database</h3><p>The store, each company and the head office each keep a Couchbase Lite database, with eight collections in one scope: inbox, tasks, agents, revocations, telemetry, rescue, approvals and tokens.</p></div>
+<div class="card"><h3>Offline first</h3><p>A store keeps writing with its link cut and replicates when it returns. The head office catches up on its own.</p></div>
+<div class="card"><h3>One writer, signed</h3><p>Each document is written by one node and signed by it, so replication produces no conflict and any copy can be verified.</p></div>
+</div>
+<p class="text" style="margin-top:auto; max-width:1550px"><b>Why a database and not files or a queue.</b> The record has to survive a dead link and still be provable later. <b>Cost:</b> a signature and rollback check on every read.</p>
+<aside>Collections live in scope a2a. A node writes only documents named for itself and signs them; peers verify the signature, the author’s right to write that kind of document, and a sequence number that only goes forward, so an old copy cannot replace a newer one. Because each document has a single writer there is nothing to merge. Replication runs peer to peer or through Sync Gateway.</aside>
+</section>

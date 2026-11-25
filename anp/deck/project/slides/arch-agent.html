@@ -1,0 +1,11 @@
+<section id="arch-agent" class="dark">
+<p class="eyebrow">The brain</p>
+<h2 class="title-sm">Rules Decide, A Model May Propose</h2>
+<div class="row" style="align-items:stretch">
+<div class="card"><h3>Rules</h3><p style="font-size:28px">Food-safety limits, carrier timing, budget limits. Deterministic, so every decision in the log names the rule behind it.</p></div>
+<div class="card"><h3>An on-device model</h3><p style="font-size:28px">LiteRT-LM runs a small chat model locally. It proposes a carrier and storage; a proposal is followed only if it passes every rule.</p></div>
+<div class="card"><h3>One Rust binary</h3><p style="font-size:28px">anp-node, on axum and tokio: the same program is a store, a company, a head office or a phone, by its flags.</p></div>
+</div>
+<p class="text" style="margin-top:auto; max-width:1550px"><b>What the test showed.</b> Qwen2.5-1.5B answered in 48 seconds and its proposal passed every rule, but its stated reason was wrong about which warehouse was cheaper: the rules are trusted, not the explanation. <b>Cost:</b> no LiteRT-LM runtime for Windows, so it ran in WSL.</p>
+<aside>The model proposes and the rules decide: a proposal is parsed, then vetted against the same rules as the agent’s own plan, and set aside with the rule it broke if it fails. The model run was Qwen2.5-1.5B-Instruct on two CPU cores in WSL; the node is a Rust workspace with axum and tokio, and the end-to-end checks are Rust tasks that start real nodes.</aside>
+</section>

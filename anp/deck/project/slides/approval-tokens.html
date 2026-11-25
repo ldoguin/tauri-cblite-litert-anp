@@ -1,0 +1,10 @@
+<section id="approval-tokens" class="cream">
+<p class="eyebrow">Decisions from far away</p>
+<h2 class="title">Approvals And Tokens Travel As Documents</h2>
+<div class="row" style="align-items:stretch">
+<div class="card"><h3>The approval</h3><p>The duty manager’s phone signs a document into the store’s channel. The store acts on it only from a named duty manager: a head office’s signed approval is logged and ignored.</p></div>
+<div class="card"><h3>Revocation and new tokens</h3><p>The authority revokes a lost token. The store stops signing with it, and takes a new one only from a carrier it was told to use, only if it is the authority’s, for this store.</p></div>
+</div>
+<p class="text" style="margin-top:auto; max-width:1500px">A company outside the retailer would still accept a revoked token: companies do not read the retailer’s gateway.</p>
+<aside>The approval is a signed document named for the store, the run and the signer, so one node’s approval can never replace another’s; the Sync Gateway sync function lets a phone write an approval only into a store channel it was given. For revocations, the head office verifies the authority’s signature and publishes the revocation; the store reads it through the gateway. A revoked token carried again is refused. The limit: companies are outside the retailer and do not read its gateway, so telling them would be an ANP message from the authority.</aside>
+</section>

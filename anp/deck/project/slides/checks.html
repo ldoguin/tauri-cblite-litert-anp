@@ -1,0 +1,14 @@
+<section id="checks" class="white">
+<p class="eyebrow">Checked end to end</p>
+<h2 class="title">Every Claim Has A Test</h2>
+<table style="width:1664px; font-size:30px; color:#000000">
+<tr><th style="width:26%">Check</th><th>What it shows</th><th style="width:12%; text-align:right">Checks</th></tr>
+<tr><td>e2e-rescue</td><td>The whole night, with a head office cut off and back</td><td style="text-align:right">44</td></tr>
+<tr><td>e2e-fleet</td><td>Two stores and a head office through Sync Gateway only</td><td style="text-align:right">18</td></tr>
+<tr><td>e2e-fleet-view</td><td>Three stores failing at once, shown live</td><td style="text-align:right">20</td></tr>
+<tr><td>e2e-approval</td><td>An approval signed on a phone; forgeries ignored</td><td style="text-align:right">21</td></tr>
+<tr><td>e2e-revocation</td><td>A revoked token refused, a new one carried in</td><td style="text-align:right">19</td></tr>
+</table>
+<p class="text" style="margin-top:auto">60 groups of unit tests pass as well.</p>
+<aside>Each claim in this deck is checked by a command in the repository’s xtask. The suites run against real nodes on one machine, and the three that involve Sync Gateway run against a local Kubernetes cluster with the Couchbase Autonomous Operator, Couchbase Server and Sync Gateway.</aside>
+</section>

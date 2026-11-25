@@ -1,0 +1,22 @@
+{
+  "v": 5,
+  "createdOnFiles": { "v": 1, "at": "2026-11-24T12:00:00Z" },
+  "lists": "css",
+  "format": { "v": 1, "shared": ["project/deck.css"] },
+  "title": "Cold-Stock Rescue: Agents Across Companies",
+  "cover": "cover",
+  "order": ["cover", "night", "clock", "control-room", "strangers", "ask", "rules", "authority", "deals", "couchbase-divider", "couchbase-pieces", "fleet-view", "approval-tokens", "arch-divider", "arch-overview", "arch-diagram", "arch-legend", "arch-identity", "arch-messaging", "arch-authority", "arch-data", "arch-fleet", "arch-agent", "arch-choices", "checks", "closing"],
+  "sections": {
+    "s1": { "description": "The night after the attack, and what the store's agent does with companies it has never worked with.", "start": "cover" },
+    "s2": { "description": "Where Couchbase moves the data, and how head office sees the fleet.", "start": "couchbase-divider" },
+    "s3": { "description": "The architecture, and the reason for each technology choice.", "start": "arch-divider" },
+    "s4": { "description": "What was checked, and what made it possible.", "start": "checks" }
+  },
+  "faces": {
+    "centra-no2": { "family": "Centra No2", "src": "project/ds/couchbase-2026/fonts/CentraNo2-Medium.otf" },
+    "inter": { "family": "Inter", "src": "project/ds/couchbase-2026/fonts/Inter-Variable.woff2" }
+  },
+  "designSystems": [
+    { "title": "Couchbase 2026 Design System", "namespace": "couchbase-2026", "artifact": "https://claude.ai/artifact/Uus9YdSg5pCjKWGsSoHpUt", "version": "1795424143-648c", "copiedAt": "2026-11-24T12:00:00Z" }
+  ]
+}

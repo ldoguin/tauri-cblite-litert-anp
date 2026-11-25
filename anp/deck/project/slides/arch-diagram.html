@@ -1,0 +1,51 @@
+<section id="arch-diagram" class="white">
+<!-- nodes (canvas px): zones R 128,220,1156,700  C 1348,220,444,700 | col1 x148 w246: Authority 276,124  HeadOffice 446,130  Phone 606,130 | SG 464,446,310,250  Server 464,746,310,170 | Store 854,276,410,580 | Companies 1368,276,404,250  Search 1368,566,404,134  Group 1368,740,404,140 -->
+<p class="eyebrow" style="position:absolute; left:128px; top:84px; width:1664px; margin:0">Every node is one Rust binary; every document and message is signed with Ed25519</p>
+<h2 class="title-sm" style="position:absolute; left:128px; top:120px; width:1664px; margin:0">How The Pieces Fit</h2>
+
+<div class="zone" style="left:128px; top:220px; width:1156px; height:700px; background:#fff0da"></div>
+<div class="zone" style="left:1348px; top:220px; width:444px; height:700px; background:#ffffff; border:3px solid #d2d5d9"></div>
+<p class="zone-label" style="left:152px; top:232px; width:500px">The retailer</p>
+<p class="zone-label" style="left:1372px; top:232px; width:380px">Outside the retailer</p>
+
+<div class="bx" style="left:148px; top:276px; width:246px; height:124px"><p class="hd">Retailer’s authority</p><p>anp-admin</p></div>
+<div class="bx" style="left:148px; top:446px; width:246px; height:130px"><p class="hd">Head office node</p><p>Couchbase Lite, fleet view</p></div>
+<div class="bx" style="left:148px; top:606px; width:246px; height:130px"><p class="hd">Duty manager’s phone</p><p>Couchbase Lite</p></div>
+
+<div class="bx cb" style="left:464px; top:446px; width:310px; height:250px"><p class="hd">Sync Gateway 4.1</p><p>A channel per store, enforced by a sync function</p><p>A store writes only what it signed</p></div>
+<div class="bx cb" style="left:464px; top:746px; width:310px; height:170px"><p class="hd">Couchbase Server</p><p>8.0, bucket fleet, scope a2a</p><p>Operator on k3d</p></div>
+
+<div class="bx" style="left:854px; top:276px; width:410px; height:580px; gap:0"></div>
+<p style="position:absolute; left:874px; top:288px; width:370px; margin:0; font-size:30px; line-height:1.2; font-weight:600; font-family:var(--font-display)">Store node</p>
+<p style="position:absolute; left:874px; top:328px; width:370px; margin:0; font-size:24px; line-height:1.3; color:#333333">anp-node: Rust, axum, tokio</p>
+<div class="bx sand cb" style="left:874px; top:380px; width:370px; height:92px; padding:10px 18px"><p class="hd">Couchbase Lite</p><p>scope a2a, 8 collections</p></div>
+<div class="bx sand" style="left:874px; top:484px; width:370px; height:92px; padding:10px 18px"><p class="hd">Rescue agent</p><p>rules, optional LiteRT-LM</p></div>
+<div class="bx sand" style="left:874px; top:588px; width:370px; height:92px; padding:10px 18px"><p class="hd">Quote buyer</p><p>Biscuit spending token</p></div>
+<div class="bx sand" style="left:874px; top:692px; width:370px; height:92px; padding:10px 18px"><p class="hd">Messaging</p><p>signed HTTP, E2EE, MLS</p></div>
+<p style="position:absolute; left:874px; top:804px; width:370px; margin:0; font-size:24px; line-height:1.3; color:#333333">Many stores: the same node</p>
+
+<div class="bx sand" style="left:1368px; top:276px; width:404px; height:250px"><p class="hd">Company nodes, eight</p><p>anp-node, did:wba on its own domain, a quote desk</p><p>Verify spending tokens offline with the authority’s public key</p></div>
+<div class="bx sand" style="left:1368px; top:566px; width:404px; height:134px"><p class="hd">Search agent</p><p>anp-search: lists only verified descriptions</p></div>
+<div class="bx sand" style="left:1368px; top:740px; width:404px; height:140px"><p class="hd">Group host</p><p>MLS (ANP P6): relays ciphertext it cannot read</p></div>
+
+<x-connector x1="1264" y1="401" x2="1368" y2="401" head="both" style="color:#333333; border-width:3px"></x-connector>
+<x-connector x1="1264" y1="633" x2="1368" y2="633" style="color:#333333; border-width:3px"></x-connector>
+<x-connector x1="1570" y1="526" x2="1570" y2="566" style="color:#333333; border-width:3px"></x-connector>
+<x-connector x1="1264" y1="810" x2="1368" y2="810" head="both" style="color:#333333; border-width:3px"></x-connector>
+<x-connector x1="774" y1="591" x2="854" y2="591" head="both" style="color:#ec1218; border-width:3px"></x-connector>
+<x-connector x1="394" y1="671" x2="464" y2="671" head="both" style="color:#ec1218; border-width:3px"></x-connector>
+<x-connector x1="394" y1="511" x2="464" y2="511" head="both" style="color:#ec1218; border-width:3px"></x-connector>
+<x-connector x1="619" y1="696" x2="619" y2="746" head="both" style="color:#ec1218; border-width:3px"></x-connector>
+<x-connector x1="271" y1="400" x2="271" y2="446" style="color:#333333; border-width:3px"></x-connector>
+
+<p class="badge" style="left:1296px; top:381px">1</p>
+<p class="badge" style="left:1296px; top:613px">2</p>
+<p class="badge" style="left:1550px; top:526px">3</p>
+<p class="badge" style="left:1296px; top:790px">4</p>
+<p class="badge" style="left:794px; top:571px">5</p>
+<p class="badge" style="left:409px; top:651px">6</p>
+<p class="badge" style="left:409px; top:491px">7</p>
+<p class="badge" style="left:599px; top:701px">8</p>
+<p class="badge" style="left:251px; top:403px">9</p>
+<aside>The whole system in one picture. Left, the retailer: the authority issues Biscuit tokens and revocations; the head office node and the duty manager’s phone are Couchbase Lite nodes; Sync Gateway sits in front of Couchbase Server, and the stores replicate into it. Right, the companies outside the retailer: eight company nodes, a search agent and a group host, reached from the store over ANP. Red outlines are the Couchbase products. The numbers are explained on the next slide.</aside>
+</section>

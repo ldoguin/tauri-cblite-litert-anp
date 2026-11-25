@@ -1,0 +1,11 @@
+<section id="arch-messaging" class="white">
+<p class="eyebrow">Messaging</p>
+<h2 class="title">Private Between Strangers</h2>
+<div class="row" style="align-items:stretch">
+<div class="card"><p class="step">Finding</p><h3>Signed descriptions</h3><p style="font-size:28px">Each company signs an agent description. A search agent lists only the ones it verified against the company’s DID.</p></div>
+<div class="card"><p class="step">Asking</p><h3>Encrypted direct messages</h3><p style="font-size:28px">Requests, quotes and acceptances travel end to end encrypted, so no relay or proxy can read them.</p></div>
+<div class="card"><p class="step">Coordinating</p><h3>An MLS group</h3><p style="font-size:28px">The plan is posted to a group on a separate host, which relays ciphertext it cannot read.</p></div>
+</div>
+<p class="text" style="margin-top:auto; max-width:1550px"><b>Why ANP across companies.</b> Inside one company the agent’s tasks use A2A. ANP is what crosses domains: identity, discovery and private messages with no shared platform. <b>Cost:</b> key packages and group state to keep, and a group host to run.</p>
+<aside>ANP-07 and ANP-08 give signed agent descriptions and a search agent that indexes only descriptions it has verified. ANP-09 P5 gives end-to-end encrypted direct messages with agents on other stacks; P6 gives MLS groups, where the group host orders and relays but holds no key. Inside one company the agent’s own tasks speak A2A.</aside>
+</section>

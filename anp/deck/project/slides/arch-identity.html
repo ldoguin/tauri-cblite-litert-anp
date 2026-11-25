@@ -1,0 +1,11 @@
+<section id="arch-identity" class="cream">
+<p class="eyebrow">Identity</p>
+<h2 class="title">A Name Each Company Owns</h2>
+<div class="row" style="align-items:stretch">
+<div class="card"><h3>did:wba</h3><p>A DID on the company’s own domain, resolved over HTTPS. No registry and no platform to join: keys are found where the company publishes them.</p></div>
+<div class="card"><h3>Ed25519 signatures</h3><p>Every document and message is signed by the node that wrote it, so a reader can verify any copy, wherever it was stored.</p></div>
+<div class="card"><h3>Signed HTTP requests</h3><p>Each request carries an HTTP Message Signature from the caller’s DID key: a company knows who is asking without a shared secret.</p></div>
+</div>
+<p class="text" style="margin-top:auto; max-width:1500px"><b>Cost.</b> Every company must run a domain and publish a DID document. In the tests a private certificate authority stands in for the web’s.</p>
+<aside>ANP identity is did:wba: the DID is resolved from the company’s own HTTPS origin. Every node holds an Ed25519 key; documents are signed by the node that wrote them, and each HTTP request is signed with HTTP Message Signatures (ANP-02). The tests run every DID over HTTPS behind TLS fronts with a certificate authority made for the run.</aside>
+</section>

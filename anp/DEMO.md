@@ -10,8 +10,9 @@ records travel through Couchbase Lite, Sync Gateway and Couchbase Server to a he
 simulation of the business (the store, the companies and their prices are fictional); the identities, signatures, tokens, encryption
 and replication are real.
 
-There is a slide deck that tells the same story (26 slides with speaker notes, in the Couchbase 2026 design). Ask whoever gave you the
-repository for its link; it is not in the repository.
+There is a slide deck that tells the same story (26 slides with speaker notes, in the Couchbase 2026 design). Its sources are in [`deck/`](deck/README.md), with a
+script that previews it locally; to present it you need it published as a Slides artifact in Claude (the deck's README says how), or ask whoever gave you the
+repository for a link to a published copy.
 
 ## 1. What you need
 

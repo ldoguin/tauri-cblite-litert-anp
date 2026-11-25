@@ -1,0 +1,10 @@
+<section id="arch-authority" class="dark">
+<p class="eyebrow">Commitments</p>
+<h2 class="title-sm">Limits The Other Side Enforces</h2>
+<div class="row" style="align-items:stretch">
+<div class="card"><h3>Biscuit tokens</h3><p>Issued by the retailer’s authority, bound to the store’s DID, with a spend cap and the categories it may buy. A holder can add checks, never remove them.</p><p>A company verifies the token offline with the authority’s public key: no call back at the moment of the deal.</p></div>
+<div class="card"><h3>A signed quote chain</h3><p>Request, quote, acceptance, confirmation: each signed, each naming the previous by digest.</p><p>An audit needs only the DID documents and the authority’s key, even after the token has expired.</p></div>
+</div>
+<p class="text" style="margin-top:auto; max-width:1550px"><b>Why not an API key.</b> A plain bearer secret cannot be narrowed by its holder, cannot be checked by a company without asking the issuer, and does not show who signed a commitment. <b>Cost:</b> a higher cap means a new token from the authority.</p>
+<aside>Biscuit tokens are verified with the authority’s public key and carry Datalog checks; attenuation adds checks and can never widen. The spending grant names a cap, a currency, the categories and the site, and the token is bound to the store’s DID. The quote messages form a chain by SHA-256 digest, and an offline audit verifies every signature, the chain and the token as it stood at the time of the commitment.</aside>
+</section>

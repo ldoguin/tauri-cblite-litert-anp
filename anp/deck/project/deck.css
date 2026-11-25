@@ -1,0 +1,80 @@
+/* Couchbase 2026: black, cream and white grounds; red used sparingly and only for large marks; Centra No2 for titles, Inter for text. */
+:root {
+  --cb-red: #ec1218;
+  --cb-red-dark: #7c0206;
+  --cb-gold: #fc9d0c;
+  --cb-cream: #fff0da;
+  --cb-cream-mid: #ead8be;
+  --cb-black: #000000;
+  --cb-gray-dark: #333333;
+  --cb-gray-mid: #858585;
+  --cb-gray-light: #d2d5d9;
+  --cb-white: #ffffff;
+  --cb-green: #21ea2a;
+  --font-display: "Centra No2", "DM Sans", -apple-system, "Segoe UI", sans-serif;
+  --font-body: "Inter", -apple-system, "Segoe UI", sans-serif;
+}
+
+body { font-family: var(--font-body); color: #000000; }
+
+section { box-sizing: border-box; padding: 128px 128px 160px; display: flex; flex-direction: column; counter-increment: page; }
+section::after { content: counter(page); position: absolute; right: 128px; bottom: 64px; font: 400 24px/1 var(--font-body); }
+section.cover::after, section.divider::after { content: none; }
+
+section.dark { background: #000000; color: #ffffff; }
+section.cream { background: #fff0da; color: #000000; }
+section.white { background: #ffffff; color: #000000; }
+
+h1, h2, h3 { font-family: var(--font-display); font-weight: 500; margin: 0; }
+.eyebrow { font: 600 24px/1.4 var(--font-body); letter-spacing: 0.1em; text-transform: uppercase; color: #333333; margin: 0 0 24px; }
+.dark .eyebrow { color: #fc9d0c; }
+
+.title { font-size: 76px; line-height: 1.05; margin: 0 0 48px; }
+.title-sm { font-size: 60px; line-height: 1.05; margin: 0 0 32px; }
+.lead { font-size: 36px; line-height: 1.4; margin: 0 0 48px; color: #333333; }
+.dark .lead { color: #d2d5d9; }
+.text { font-size: 32px; line-height: 1.4; margin: 0; }
+.small { font-size: 28px; line-height: 1.4; margin: 0; }
+.note { font-size: 24px; line-height: 1.4; margin: 0; color: #333333; }
+.dark .note { color: #d2d5d9; }
+.mono { font-family: Consolas, "Courier New", monospace; font-size: 28px; line-height: 1.4; margin: 0; }
+
+.row { display: flex; gap: 32px; }
+.row > * { flex: 1; }
+.col { display: flex; flex-direction: column; gap: 24px; }
+
+.card { background: #ffffff; border-radius: 30px; padding: 40px; display: flex; flex-direction: column; gap: 16px; }
+.cream .card { background: #ffffff; }
+.white .card { background: #fff0da; }
+.dark .card { background: #333333; color: #ffffff; }
+.card h3 { font-size: 40px; line-height: 1.15; }
+.card p { font-size: 30px; line-height: 1.4; margin: 0; }
+
+.big { font-family: var(--font-display); font-weight: 500; font-size: 140px; line-height: 1; margin: 0; }
+.big.red { color: #ec1218; }
+.dark .big.gold, .big.gold { color: #fc9d0c; }
+.cap { font-size: 30px; line-height: 1.35; margin: 0; color: #333333; }
+.dark .cap { color: #d2d5d9; }
+
+.bar { width: 96px; height: 8px; background: #ec1218; margin: 0 0 32px; }
+
+.step { font-family: var(--font-display); font-weight: 500; font-size: 28px; line-height: 1; color: #ec1218; margin: 0; }
+.dark .step { color: #fc9d0c; }
+.white .step { color: #7c0206; }
+
+.pic { background: #000000; border-radius: 20px; object-fit: contain; }
+.arrow { width: 56px; height: 28px; background: #ec1218; flex: none; align-self: center; }
+.row > x-shape { flex: none; }
+
+/* architecture diagram: boxes, a Couchbase outline, numbered links */
+.bx { position: absolute; box-sizing: border-box; border-radius: 24px; padding: 14px 18px; background: #ffffff; color: #000000; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.bx p { margin: 0; font-size: 24px; line-height: 1.3; }
+.bx .hd { font-size: 26px; font-weight: 600; line-height: 1.2; }
+.bx.sand { background: #fff0da; }
+.bx.cb { border: 3px solid #ec1218; }
+.zone { position: absolute; box-sizing: border-box; border-radius: 30px; margin: 0; }
+.zone-label { position: absolute; margin: 0; font: 600 24px/1.4 var(--font-body); letter-spacing: 0.1em; text-transform: uppercase; color: #333333; }
+.badge { position: absolute; width: 40px; height: 40px; border-radius: 20px; background: #ec1218; color: #ffffff; font: 600 24px/40px var(--font-body); text-align: center; margin: 0; }
+ul { list-style: disc; padding-left: 40px; }
+li { margin: 0 0 20px; }
+.logo { width: 280px; height: 53px; }

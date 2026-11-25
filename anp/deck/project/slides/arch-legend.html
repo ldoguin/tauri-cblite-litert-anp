@@ -1,0 +1,18 @@
+<section id="arch-legend" class="cream">
+<p class="eyebrow">How they talk</p>
+<h2 class="title-sm">What Each Numbered Link Carries</h2>
+<table style="width:1664px; font-size:24px; color:#000000">
+<tr><th style="width:5%">#</th><th style="width:25%">Between</th><th style="width:42%">Protocol</th><th>Carries</th></tr>
+<tr><td>1</td><td>Store and companies</td><td>HTTP Message Signatures, E2EE direct messages</td><td>Quotes and acceptances</td></tr>
+<tr><td>2</td><td>Store and search agent</td><td>ANP-08 search; DIDs resolved over HTTPS</td><td>Who can help</td></tr>
+<tr><td>3</td><td>Companies and search agent</td><td>Signed agent descriptions (ANP-07)</td><td>What each offers</td></tr>
+<tr><td>4</td><td>Store, companies, group host</td><td>MLS group (ANP P6)</td><td>The plan</td></tr>
+<tr><td>5</td><td>Store and Sync Gateway</td><td>Couchbase Lite replication, WebSocket</td><td>Its own channel</td></tr>
+<tr><td>6</td><td>Phone and Sync Gateway</td><td>Couchbase Lite replication, WebSocket</td><td>A signed approval</td></tr>
+<tr><td>7</td><td>Head office and Sync Gateway</td><td>Replication; reads every channel</td><td>Records, revocations, tokens</td></tr>
+<tr><td>8</td><td>Sync Gateway and Server</td><td>Couchbase SDK, bucket fleet</td><td>Every document, kept</td></tr>
+<tr><td>9</td><td>Authority and head office</td><td>Biscuit tokens, signed revocations</td><td>Spending limits</td></tr>
+</table>
+<p class="text" style="margin-top:auto; max-width:1600px; font-size:28px">Red outlines are Couchbase products. With no gateway, a store replicates straight to the head office’s Couchbase Lite, over TLS with DID admission.</p>
+<aside>Links 1 to 4 are the Agent Network Protocol and cross company boundaries. Links 5 to 8 are Couchbase replication inside the retailer. Link 9 is how the authority’s Biscuit tokens and revocations reach the stores: through the head office, which carries them in as documents. The authority’s public key is also given to every company, so it can verify a store’s token offline.</aside>
+</section>

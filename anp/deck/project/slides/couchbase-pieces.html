@@ -1,0 +1,15 @@
+<section id="couchbase-pieces" class="white">
+<p class="eyebrow">The pieces</p>
+<h2 class="title-sm">Four Couchbase Pieces, All Moving</h2>
+<div class="row" style="align-items:stretch">
+<div class="card"><p class="step">In the store</p><h3>Couchbase Lite</h3><p style="font-size:28px">The store’s own database. Temperature logs and the agent’s record, each signed by the store.</p></div>
+<x-shape kind="arrow-right" style="width:48px; height:26px; background:#ec1218; flex:none; align-self:center"></x-shape>
+<div class="card"><p class="step">In the middle</p><h3>Sync Gateway</h3><p style="font-size:28px">A channel per store. A store writes only what it signed and reads only its own.</p></div>
+<x-shape kind="arrow-right" style="width:48px; height:26px; background:#ec1218; flex:none; align-self:center"></x-shape>
+<div class="card"><p class="step">At head office</p><h3>Couchbase Server</h3><p style="font-size:28px">Keeps every store’s documents: bucket fleet, scope a2a.</p></div>
+<x-shape kind="arrow-right" style="width:48px; height:26px; background:#ec1218; flex:none; align-self:center"></x-shape>
+<div class="card"><p class="step">At head office</p><h3>Couchbase Lite</h3><p style="font-size:28px">Pulls every channel and verifies each signature on arrival.</p></div>
+</div>
+<p class="text" style="margin-top:auto; max-width:1500px">In the demo a strip under the header counts each piece’s documents live, and outlines a box in red when its number changes.</p>
+<aside>Sync Gateway moves and keeps documents; it is not what makes them true. Every reader verifies each document, so a record proves itself wherever it is stored. Each store’s Couchbase Lite replicates its signed documents through Sync Gateway into Couchbase Server, and the head office’s Couchbase Lite pulls them out. With no gateway, stores replicate directly to the head office’s Couchbase Lite, peer to peer.</aside>
+</section>
